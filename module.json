@@ -5,16 +5,16 @@
   "version": "1.1.7",
   "authors": [
     {
-      "name": "#{OWNER}#",
-      "url": "https://github.com/#{OWNER}#"
+      "name": "Huxtuntios",
+      "url": "https://github.com/Huxtuntios"
     }
   ],
-  "url": "#{URL}#",
-  "manifest": "#{MANIFEST}#",
-  "download": "#{DOWNLOAD}#",
-  "bugs": "#{URL}#/issues",
-  "readme": "#{URL}#/blob/main/README.md",
-  "license": "#{URL}#/blob/main/LICENSE",
+  "url": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager",
+  "manifest": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager/blob/main/module.json",
+  "download": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager/releases/latest/download/module.json",
+  "bugs": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager/issues",
+  "readme": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager/blob/main/README.md",
+  "license": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager/blob/main/LICENSE",
   "compatibility": {
     "minimum": "13",
     "verified": "14",
