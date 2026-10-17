@@ -1,0 +1,22 @@
+{
+  "name": "pf2e-dailies-apparition-fix",
+  "version": "1.1.7",
+  "private": true,
+  "description": "Pf2e Animist Apparition Manager - a Foundry VTT module for the Pathfinder 2e Animist.",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint scripts tools",
+    "format": "prettier --write \"scripts/*.mjs\" \"tools/*.mjs\" \"styles/*.css\"",
+    "format:check": "prettier --check \"scripts/*.mjs\" \"tools/*.mjs\" \"styles/*.css\"",
+    "check:lang": "node tools/check-lang.mjs",
+    "check:release": "node tools/build-release.mjs --check",
+    "build:release": "node tools/build-release.mjs",
+    "test": "npm run lint && npm run format:check && npm run check:lang && npm run check:release"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "eslint": "^9.39.0",
+    "globals": "^16.0.0",
+    "prettier": "^3.6.0"
+  }
+}

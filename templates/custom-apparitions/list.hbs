@@ -1,0 +1,39 @@
+<div class="apparition-fix-list">
+    <div class="apparition-fix-custom-toolbar">
+        <button type="button" data-action="create">
+            <i class="fa-solid fa-plus"></i>
+            {{localize "pf2e-dailies-apparition-fix.CustomApparition.CreateNew"}}
+        </button>
+        <button type="button" data-action="import">
+            <i class="fa-solid fa-file-import"></i>
+            {{localize "pf2e-dailies-apparition-fix.CustomApparition.Import"}}
+        </button>
+        <button type="button" data-action="export-all">
+            <i class="fa-solid fa-file-export"></i>
+            {{localize "pf2e-dailies-apparition-fix.CustomApparition.ExportAll"}}
+        </button>
+    </div>
+
+    <ol class="apparition-fix-apparition-list">
+        {{#each apparitions}}
+        <li data-id="{{this.id}}">
+            <img src="{{this.img}}" alt="" />
+            <span class="name">{{this.name}}</span>
+            <a data-action="edit" data-id="{{this.id}}" title="{{localize 'pf2e-dailies-apparition-fix.CustomApparition.Edit'}}">
+                <i class="fa-solid fa-pen"></i>
+            </a>
+            <a data-action="copy" data-id="{{this.id}}" title="{{localize 'pf2e-dailies-apparition-fix.CustomApparition.Copy'}}">
+                <i class="fa-solid fa-copy"></i>
+            </a>
+            <a data-action="export" data-id="{{this.id}}" title="{{localize 'pf2e-dailies-apparition-fix.CustomApparition.Export'}}">
+                <i class="fa-solid fa-file-export"></i>
+            </a>
+            <a data-action="delete" data-id="{{this.id}}" title="{{localize 'pf2e-dailies-apparition-fix.CustomApparition.Delete'}}">
+                <i class="fa-solid fa-trash"></i>
+            </a>
+        </li>
+        {{else}}
+        <li class="empty">{{localize "pf2e-dailies-apparition-fix.CustomApparition.Empty"}}</li>
+        {{/each}}
+    </ol>
+</div>

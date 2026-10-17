@@ -1,0 +1,62 @@
+<section class="apparition-fix-wandering-settings">
+    <p class="hint">{{localize "pf2e-dailies-apparition-fix.WanderingSettings.Hint"}}</p>
+    <div class="apparition-fix-wandering-settings-toolbar">
+        <button type="button" data-action="create-feat"><i class="fa-solid fa-plus"></i> {{localize "pf2e-dailies-apparition-fix.WanderingSettings.Create"}}</button>
+    </div>
+    <ol class="apparition-fix-wandering-settings-list">
+        {{#each feats}}
+        <li>
+            <details>
+                <summary>
+                    <img src="{{this.img}}" alt="" />
+                    <span class="name">{{this.name}}</span>
+                    <span class="level">{{this.levelLabel}}</span>
+                    {{#if this.custom}}<span class="badge custom">{{localize "pf2e-dailies-apparition-fix.WanderingSettings.Custom"}}</span>{{/if}}
+                    {{#if this.modified}}<span class="badge modified">{{localize "pf2e-dailies-apparition-fix.WanderingSettings.Modified"}}</span>{{/if}}
+                    <span class="count">{{#if this.none}}{{localize "pf2e-dailies-apparition-fix.WanderingSettings.NoRequirement"}}{{else}}{{this.count}}{{/if}}</span>
+                </summary>
+                <div class="apparition-fix-wandering-settings-body">
+                    <div class="tools">
+                        <a data-action="open-feat" data-uuid="{{this.uuid}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Wandering.OpenOriginal'}}"><i class="fa-solid fa-book-open"></i></a>
+                        {{#if this.custom}}
+                        <a data-action="edit-feat" data-uuid="{{this.uuid}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.WanderingSettings.Edit'}}"><i class="fa-solid fa-pen"></i></a>
+                        <a data-action="delete-feat" data-uuid="{{this.uuid}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.WanderingSettings.Delete'}}"><i class="fa-solid fa-trash"></i></a>
+                        {{/if}}
+                        {{#if this.modified}}
+                        <a data-action="reset-feat" data-uuid="{{this.uuid}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.WanderingSettings.Reset'}}"><i class="fa-solid fa-rotate-left"></i></a>
+                        {{/if}}
+                    </div>
+                    {{#if this.loreText}}
+                    <p class="lore-table">{{localize "pf2e-dailies-apparition-fix.WanderingSettings.ByLore"}}: {{this.loreText}}</p>
+                    {{/if}}
+                    <ul class="suitable">
+                        {{#each this.suitable}}
+                        <li class="{{#if this.added}}added{{/if}}">
+                            <img src="{{this.img}}" alt="" />
+                            <span class="name">{{this.name}}</span>
+                            <a data-action="remove-apparition" data-uuid="{{../this.uuid}}" data-key="{{this.key}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.WanderingSettings.RemoveApparition'}}"><i class="fa-solid fa-xmark"></i></a>
+                        </li>
+                        {{/each}}
+                        {{#each this.unknown}}
+                        <li class="unknown">
+                            <span class="name">⚠ {{this.name}}</span>
+                            <a data-action="remove-apparition" data-uuid="{{../this.uuid}}" data-key="{{this.key}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.WanderingSettings.RemoveApparition'}}"><i class="fa-solid fa-xmark"></i></a>
+                        </li>
+                        {{/each}}
+                    </ul>
+                    <div class="add-row">
+                        <select name="add-{{@index}}">
+                            {{#each this.candidates}}<option value="{{this.key}}">{{this.name}}</option>{{/each}}
+                        </select>
+                        <button type="button" data-action="add-apparition" data-uuid="{{this.uuid}}" data-select="add-{{@index}}" {{#unless this.candidates.length}}disabled{{/unless}}>
+                            <i class="fa-solid fa-plus"></i> {{localize "pf2e-dailies-apparition-fix.WanderingSettings.AddApparition"}}
+                        </button>
+                    </div>
+                </div>
+            </details>
+        </li>
+        {{else}}
+        <li class="empty">{{localize "pf2e-dailies-apparition-fix.WanderingSettings.NoFeats"}}</li>
+        {{/each}}
+    </ol>
+</section>

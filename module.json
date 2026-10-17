@@ -1,0 +1,55 @@
+{
+  "id": "pf2e-dailies-apparition-fix",
+  "title": "Pf2e Animist Apparition Manager",
+  "description": "Standalone Animist manager for Pathfinder 2e: bonding apparitions, Vessel spells, the primary set, the focus pool, Wandering Feats and custom apparitions. Works with or without PF2e Dailies; optional PF2e Avatars integration.",
+  "version": "1.1.7",
+  "authors": [
+    {
+      "name": "#{OWNER}#",
+      "url": "https://github.com/#{OWNER}#"
+    }
+  ],
+  "url": "#{URL}#",
+  "manifest": "#{MANIFEST}#",
+  "download": "#{DOWNLOAD}#",
+  "bugs": "#{URL}#/issues",
+  "readme": "#{URL}#/blob/main/README.md",
+  "license": "#{URL}#/blob/main/LICENSE",
+  "compatibility": {
+    "minimum": "13",
+    "verified": "14",
+    "maximum": "14"
+  },
+  "relationships": {
+    "systems": [
+      {
+        "id": "pf2e",
+        "type": "system",
+        "compatibility": {
+          "minimum": "6"
+        }
+      }
+    ]
+  },
+  "esmodules": [
+    "scripts/apparition-fix.mjs",
+    "scripts/custom-apparitions.mjs",
+    "scripts/manage-apparitions.mjs",
+    "scripts/wandering-settings.mjs"
+  ],
+  "styles": [
+    "styles/apparition-fix.css"
+  ],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    },
+    {
+      "lang": "ru",
+      "name": "Русский",
+      "path": "lang/ru.json"
+    }
+  ]
+}

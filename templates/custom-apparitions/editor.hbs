@@ -1,0 +1,170 @@
+<form class="apparition-fix-editor-form" autocomplete="off">
+    <nav class="apparition-fix-editor-steps">
+        <span class="apparition-fix-editor-step {{#if isStep1}}active{{/if}}">
+            <i class="fa-solid fa-circle-1"></i> {{localize "pf2e-dailies-apparition-fix.CustomApparition.StepBasics"}}
+        </span>
+        <span class="apparition-fix-editor-step {{#if isStep2}}active{{/if}}">
+            <i class="fa-solid fa-circle-2"></i> {{localize "pf2e-dailies-apparition-fix.CustomApparition.StepVessel"}}
+        </span>
+    </nav>
+
+    <div class="apparition-fix-editor-step-body">
+        {{#if isStep1}}
+        <div class="form-group">
+            <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.Name"}}</label>
+            <input type="text" name="name" value="{{name}}" required />
+        </div>
+
+        <div class="form-group apparition-fix-icon-picker">
+            <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.Icon"}}</label>
+            <div class="apparition-fix-icon-picker-control">
+                <img src="{{img}}" alt="" data-action="pickIcon" data-target="apparition" data-icon-preview="apparition" />
+                <input type="text" name="apparitionImg" value="{{img}}" data-icon-input="apparition" />
+                <button type="button" data-action="pickIcon" data-target="apparition" title="{{localize 'pf2e-dailies-apparition-fix.CustomApparition.IconBrowse'}}">
+                    <i class="fa-solid fa-folder-open"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.Flavor"}}</label>
+            <textarea name="flavor" rows="4">{{flavor}}</textarea>
+        </div>
+
+        <div class="form-group">
+            <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.Lores"}}</label>
+            <input type="text" name="lores" value="{{loresText}}" placeholder="{{localize 'pf2e-dailies-apparition-fix.CustomApparition.LoresPlaceholder'}}" />
+            <p class="hint">{{localize "pf2e-dailies-apparition-fix.CustomApparition.LoresHint"}}</p>
+        </div>
+
+        <fieldset>
+            <legend>{{localize "pf2e-dailies-apparition-fix.CustomApparition.Spells"}}</legend>
+            <p class="hint">{{localize "pf2e-dailies-apparition-fix.CustomApparition.SpellsHint"}}</p>
+            <ol class="apparition-fix-spell-list" data-drop-zone="spells">
+                {{#each spells}}
+                <li data-uuid="{{this.uuid}}">
+                    <img src="{{this.img}}" alt="" />
+                    <span class="rank">{{this.rankLabel}}</span>
+                    <span class="name">{{this.name}}</span>
+                    <a data-action="removeSpell" data-uuid="{{this.uuid}}"><i class="fa-solid fa-xmark"></i></a>
+                </li>
+                {{else}}
+                <li class="empty">{{localize "pf2e-dailies-apparition-fix.CustomApparition.SpellsEmpty"}}</li>
+                {{/each}}
+            </ol>
+        </fieldset>
+        {{/if}}
+
+        {{#if isStep2}}
+        <fieldset class="apparition-fix-vessel-avatar-form">
+            <legend>{{localize "pf2e-dailies-apparition-fix.CustomApparition.AvatarForm"}}</legend>
+            {{#if hasAvatarFormChoices}}
+            <div class="form-group">
+                <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.AvatarForm"}}</label>
+                <select name="avatarUuid">
+                    <option value="" {{#unless avatarUuid}}selected{{/unless}}>{{localize "pf2e-dailies-apparition-fix.CustomApparition.AvatarFormNone"}}</option>
+                    {{#each avatarFormChoices}}
+                    <option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>
+                    {{/each}}
+                </select>
+            </div>
+            <p class="hint">{{localize "pf2e-dailies-apparition-fix.CustomApparition.AvatarFormHint"}}</p>
+            {{else}}
+            <p class="hint">{{localize "pf2e-dailies-apparition-fix.CustomApparition.AvatarModuleInactive"}}</p>
+            {{/if}}
+        </fieldset>
+
+        <fieldset class="apparition-fix-vessel-spell">
+            <legend>{{localize "pf2e-dailies-apparition-fix.CustomApparition.Vessel"}}</legend>
+            <p class="hint">{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselHint"}}</p>
+
+            <div class="form-group apparition-fix-icon-picker">
+                <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.Icon"}}</label>
+                <div class="apparition-fix-icon-picker-control">
+                    <img src="{{vessel.img}}" alt="" data-action="pickIcon" data-target="vessel" data-icon-preview="vessel" />
+                    <input type="text" name="vesselImg" value="{{vessel.img}}" data-icon-input="vessel" />
+                    <button type="button" data-action="pickIcon" data-target="vessel" title="{{localize 'pf2e-dailies-apparition-fix.CustomApparition.IconBrowse'}}">
+                        <i class="fa-solid fa-folder-open"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselName"}}</label>
+                <input type="text" name="vesselName" value="{{vessel.name}}" required />
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselRank"}}</label>
+                    <input type="number" name="vesselRank" min="1" max="10" value="{{vessel.rank}}" />
+                </div>
+                <div class="form-group">
+                    <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselActions"}}</label>
+                    <select name="vesselActions">
+                        {{#each vesselActionOptions}}
+                        <option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>
+                        {{/each}}
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselRange"}}</label>
+                <input type="text" name="vesselRange" value="{{vessel.range}}" />
+            </div>
+            <div class="form-group">
+                <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselTarget"}}</label>
+                <input type="text" name="vesselTarget" value="{{vessel.target}}" />
+            </div>
+            <div class="form-group">
+                <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselDuration"}}</label>
+                <input type="text" name="vesselDuration" value="{{vessel.duration}}" />
+            </div>
+
+            <div class="form-group">
+                <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselTraits"}}</label>
+                <div class="apparition-fix-tag-picker">
+                    <div class="apparition-fix-tag-picker-tags">
+                        {{#each vesselTraitTags}}
+                        <span class="apparition-fix-tag">
+                            {{this.label}}
+                            <a data-action="removeTrait" data-value="{{this.value}}" title="{{localize 'pf2e-dailies-apparition-fix.CustomApparition.VesselTraitsRemove'}}">
+                                <i class="fa-solid fa-xmark"></i>
+                            </a>
+                        </span>
+                        {{else}}
+                        <span class="apparition-fix-tag-picker-empty">{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselTraitsEmpty"}}</span>
+                        {{/each}}
+                    </div>
+                    <select data-action="addTrait">
+                        <option value="">{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselTraitsAdd"}}</option>
+                        {{#each vesselTraitChoices}}
+                        <option value="{{this.value}}">{{this.label}}</option>
+                        {{/each}}
+                    </select>
+                </div>
+                <p class="hint">{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselTraitsHint"}}</p>
+            </div>
+
+            <div class="form-group">
+                <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselDescription"}}</label>
+                <textarea name="vesselDescription" rows="4">{{vessel.description}}</textarea>
+            </div>
+        </fieldset>
+        {{/if}}
+    </div>
+
+    <footer class="form-footer apparition-fix-editor-footer">
+        {{#unless isStep1}}
+        <button type="button" data-action="back"><i class="fa-solid fa-arrow-left"></i> {{localize "pf2e-dailies-apparition-fix.CustomApparition.Back"}}</button>
+        {{/unless}}
+        {{#if isStep1}}
+        <button type="button" data-action="next">{{localize "pf2e-dailies-apparition-fix.CustomApparition.Next"}} <i class="fa-solid fa-arrow-right"></i></button>
+        {{/if}}
+        {{#if isStep2}}
+        <button type="button" data-action="save"><i class="fa-solid fa-floppy-disk"></i> {{localize "pf2e-dailies-apparition-fix.CustomApparition.Save"}}</button>
+        {{/if}}
+        <button type="button" data-action="cancel"><i class="fa-solid fa-xmark"></i> {{localize "pf2e-dailies-apparition-fix.CustomApparition.Cancel"}}</button>
+    </footer>
+</form>

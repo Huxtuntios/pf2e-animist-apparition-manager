@@ -1,0 +1,34 @@
+name: Release
+
+# Runs when a release is published on GitHub. Builds module.json (with the
+# URLs filled in) and module.zip, then attaches both to that release.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check the module
+        run: npm test
+
+      - name: Build module.json and module.zip
+        run: node tools/build-release.mjs --repo "${{ github.repository }}" --tag "${{ github.event.release.tag_name }}"
+
+      - name: Attach the files to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/module.json dist/module.zip --clobber

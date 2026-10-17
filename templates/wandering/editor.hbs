@@ -1,0 +1,76 @@
+<form class="apparition-fix-editor-form" autocomplete="off">
+    <div class="form-group">
+        <label>{{localize "pf2e-dailies-apparition-fix.WanderingSettings.Name"}}</label>
+        <input type="text" name="name" value="{{name}}" />
+    </div>
+
+    <div class="form-group apparition-fix-icon-picker">
+        <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.Icon"}}</label>
+        <div class="apparition-fix-icon-picker-control">
+            <img src="{{img}}" alt="" data-action="pickIcon" data-icon-preview="feat" />
+            <input type="text" name="img" value="{{img}}" data-icon-input="feat" />
+            <button type="button" data-action="pickIcon" title="{{localize 'pf2e-dailies-apparition-fix.CustomApparition.IconBrowse'}}">
+                <i class="fa-solid fa-folder-open"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label>{{localize "pf2e-dailies-apparition-fix.WanderingSettings.FeatLevel"}}</label>
+        <input type="number" name="level" min="1" max="20" step="1" value="{{level}}" />
+        <p class="hint">{{localize "pf2e-dailies-apparition-fix.WanderingSettings.LevelHint"}}</p>
+    </div>
+
+    <div class="form-group">
+        <label>{{localize "pf2e-dailies-apparition-fix.WanderingSettings.Traits"}}</label>
+        <div class="apparition-fix-tag-picker">
+            <div class="apparition-fix-tag-picker-tags">
+                {{#each traitTags}}
+                <span class="apparition-fix-tag">
+                    {{this.label}}
+                    <a data-action="removeTrait" data-value="{{this.value}}" title="{{localize 'pf2e-dailies-apparition-fix.WanderingSettings.TraitsRemove'}}">
+                        <i class="fa-solid fa-xmark"></i>
+                    </a>
+                </span>
+                {{else}}
+                <span class="apparition-fix-tag-picker-empty">{{localize "pf2e-dailies-apparition-fix.WanderingSettings.TraitsEmpty"}}</span>
+                {{/each}}
+            </div>
+            <select data-action="addTrait">
+                <option value="">{{localize "pf2e-dailies-apparition-fix.WanderingSettings.TraitsAdd"}}</option>
+                {{#each traitChoices}}
+                <option value="{{this.value}}">{{this.label}}</option>
+                {{/each}}
+            </select>
+        </div>
+        <p class="hint">{{localize "pf2e-dailies-apparition-fix.WanderingSettings.TraitsHint"}}</p>
+    </div>
+
+    <div class="form-group">
+        <label>{{localize "pf2e-dailies-apparition-fix.WanderingSettings.Description"}}</label>
+        <textarea name="description" rows="4">{{description}}</textarea>
+    </div>
+
+    <fieldset>
+        <legend>{{localize "pf2e-dailies-apparition-fix.WanderingSettings.SuitableApparitions"}}</legend>
+        <p class="hint">{{localize "pf2e-dailies-apparition-fix.WanderingSettings.SuitableHint"}}</p>
+        <input type="text" data-role="filter" placeholder="{{localize 'pf2e-dailies-apparition-fix.WanderingSettings.Filter'}}" />
+        <ul class="apparition-fix-wandering-checklist">
+            {{#each apparitions}}
+            <li data-filter-text="{{this.searchText}}">
+                <label>
+                    <input type="checkbox" name="apparition" value="{{this.key}}" {{#if this.checked}}checked{{/if}} />
+                    <img src="{{this.img}}" alt="" />
+                    <span class="name">{{this.name}}</span>
+                    <small>{{this.loresText}}</small>
+                </label>
+            </li>
+            {{/each}}
+        </ul>
+    </fieldset>
+
+    <footer class="apparition-fix-editor-footer">
+        <button type="button" data-action="cancel">{{localize "pf2e-dailies-apparition-fix.Dialog.Cancel"}}</button>
+        <button type="button" data-action="save"><i class="fa-solid fa-floppy-disk"></i> {{localize "pf2e-dailies-apparition-fix.WanderingSettings.Save"}}</button>
+    </footer>
+</form>

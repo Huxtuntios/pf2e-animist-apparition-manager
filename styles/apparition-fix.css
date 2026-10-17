@@ -1,0 +1,824 @@
+.apparition-fix-cast-dialog {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.apparition-fix-cast-dialog p {
+    margin: 0 0 0.25rem 0;
+}
+
+.apparition-fix-cast-dialog .form-group {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.apparition-fix-cast-dialog select {
+    flex: 1;
+}
+
+/* Custom apparitions: editor form */
+
+/* CRITICAL FIX: Foundry's window chrome clips (`overflow: hidden`) the
+   content area around whatever a part's PARTS.scrollable declares as its
+   scrolling element - it does NOT add `overflow-y: auto` itself, that's
+   left entirely to the module's own CSS (see PF2e Dailies' own
+   `.scrollable { overflow: hidden auto; }` pattern, which this mirrors).
+   `editor.hbs`'s PARTS declares `scrollable: [""]`, meaning *this* form
+   element - the part's own root - is the one Foundry tracks/restores
+   scroll position on; without an explicit height + overflow-y here, nothing
+   above ever actually scrolls, so every field past the Flavor textarea
+   (Lores, Spells, the whole Vessel section, and the Save button itself)
+   was simply cut off at the window's bottom edge and unreachable. */
+.apparition-fix-editor-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.5rem;
+    height: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+/* The 3-step wizard (Basics / Spells / Vessel) this form is split into -
+   a single giant page used to bury the Vessel section (and the Save
+   button) far enough down that, combined with the scrolling bug fixed
+   above, it was effectively unreachable. Each step shows only its own
+   fields (see editor.hbs's `{{#if isStepN}}` blocks); Back/Next/Save in
+   the footer move between them without losing anything already typed -
+   see `#syncFormState` in custom-apparitions.mjs. */
+.apparition-fix-editor-steps {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex: 0 0 auto;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--color-border-light-tertiary, #7a7971);
+}
+
+.apparition-fix-editor-steps .apparition-fix-editor-step {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex: 1;
+    justify-content: center;
+    opacity: 0.5;
+    font-size: var(--font-size-13, 13px);
+}
+
+.apparition-fix-editor-steps .apparition-fix-editor-step.active {
+    opacity: 1;
+    font-weight: bold;
+}
+
+.apparition-fix-editor-step-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* The Vessel traits tag-picker: a plain native <select> to add a trait
+   (its own option list already excludes whatever's already a tag - see
+   `vesselTraitChoices` in custom-apparitions.mjs) plus already-added
+   traits rendered as removable pills. Deliberately not Foundry's own
+   `<multi-select>` element - see custom-apparitions.mjs's own notes on
+   why that broke on this form's particular re-render pattern. */
+.apparition-fix-tag-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.apparition-fix-tag-picker-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    min-height: 1.6rem;
+}
+
+.apparition-fix-tag-picker-empty {
+    opacity: 0.6;
+    font-style: italic;
+    font-size: var(--font-size-12, 12px);
+}
+
+.apparition-fix-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    background: var(--color-warm-2, #ff6400);
+    color: #fff;
+    font-size: var(--font-size-12, 12px);
+}
+
+.apparition-fix-tag a {
+    cursor: pointer;
+    display: inline-flex;
+    opacity: 0.85;
+}
+
+.apparition-fix-tag a:hover {
+    opacity: 1;
+}
+
+.apparition-fix-editor-form fieldset {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    border: 1px solid var(--color-border-light-tertiary, #7a7971);
+    border-radius: 4px;
+}
+
+/* Override the system's default row-layout .form-group (label left, control
+   right, vertically centered): fine for a single-line input, but with a
+   multi-line textarea or a multi-select it left the label floating next to
+   (or visually below) a tall, unlabeled-looking box. Label-above-control
+   reads correctly regardless of the control's height. */
+.apparition-fix-editor-form .form-group {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.25rem;
+}
+
+.apparition-fix-editor-form .form-group textarea,
+.apparition-fix-editor-form .form-group select,
+.apparition-fix-editor-form .form-group input {
+    width: 100%;
+}
+
+.apparition-fix-editor-form .form-row {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.apparition-fix-editor-form .form-row .form-group {
+    flex: 1;
+}
+
+.apparition-fix-editor-form .hint {
+    margin: 0;
+    font-size: var(--font-size-12, 12px);
+    opacity: 0.75;
+}
+
+.apparition-fix-icon-picker-control {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.apparition-fix-icon-picker-control img {
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--color-border-light-tertiary, #7a7971);
+    border-radius: 4px;
+    object-fit: cover;
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+
+.apparition-fix-icon-picker-control input[type="text"] {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.apparition-fix-icon-picker-control button {
+    width: auto;
+    flex: 0 0 auto;
+}
+
+.apparition-fix-spell-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-height: 3rem;
+    margin: 0;
+    padding: 0.5rem;
+    list-style: none;
+    border: 1px dashed var(--color-border-light-tertiary, #7a7971);
+    border-radius: 4px;
+}
+
+.apparition-fix-spell-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.apparition-fix-spell-list li.empty {
+    justify-content: center;
+    opacity: 0.6;
+    font-style: italic;
+}
+
+.apparition-fix-spell-list img {
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 3px;
+    object-fit: cover;
+}
+
+.apparition-fix-spell-list .rank {
+    min-width: 3.5rem;
+    font-weight: bold;
+    opacity: 0.8;
+}
+
+.apparition-fix-spell-list .name {
+    flex: 1;
+}
+
+.apparition-fix-editor-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+.apparition-fix-editor-footer [data-action="cleanup-vessels"] {
+    margin-right: auto;
+}
+
+/* Custom apparitions: management list */
+
+.apparition-fix-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    /* Same reasoning as `.apparition-fix-editor-form` above, but here
+       `list.hbs`'s PARTS declares `scrollable: ["ol"]` - the <ol> itself,
+       not this wrapping <div>, is what Foundry expects to scroll, so it's
+       *this* container that needs a bounded height for the <ol>'s
+       `flex: 1` below to have something to shrink against. */
+    height: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.apparition-fix-list > .apparition-fix-apparition-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.apparition-fix-apparition-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.apparition-fix-apparition-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+}
+
+.apparition-fix-apparition-list li:not(.empty):hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.apparition-fix-apparition-list li.empty {
+    justify-content: center;
+    opacity: 0.6;
+    font-style: italic;
+}
+
+.apparition-fix-apparition-list > li > img {
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 3px;
+    object-fit: cover;
+}
+
+.apparition-fix-apparition-list .name {
+    flex: 1;
+}
+
+.apparition-fix-apparition-list > li > a {
+    cursor: pointer;
+    opacity: 0.75;
+    flex: 0 0 auto;
+    margin-top: 0.3rem;
+}
+
+.apparition-fix-apparition-list > li > a:hover {
+    opacity: 1;
+}
+
+/* The "view spells" disclosure this module adds to each bonded/available
+   apparition row (requirement: see what an apparition actually grants
+   without leaving the dialog) - a plain <details>/<summary> gives this for
+   free (native keyboard/click toggle, no extra JS) in exactly the
+   "dropdown list" shape asked for. */
+.apparition-fix-grants {
+    flex: 1;
+    min-width: 0;
+}
+
+.apparition-fix-grants > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
+.apparition-fix-grants > summary img {
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 3px;
+    object-fit: cover;
+    flex: 0 0 auto;
+}
+
+.apparition-fix-grants-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin: 0.35rem 0 0.15rem 1.4rem;
+    padding: 0;
+    list-style: none;
+    font-size: var(--font-size-12, 12px);
+    opacity: 0.85;
+}
+
+.apparition-fix-grants-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.apparition-fix-grants-list img {
+    width: 16px;
+    height: 16px;
+    border: none;
+    border-radius: 3px;
+    object-fit: cover;
+    flex: 0 0 auto;
+}
+
+.apparition-fix-grants-list .rank {
+    min-width: 3rem;
+    font-weight: bold;
+    opacity: 0.8;
+}
+
+.apparition-fix-grants-list .lore i {
+    width: 16px;
+    text-align: center;
+    opacity: 0.7;
+}
+
+.apparition-fix-grants-list .empty {
+    opacity: 0.7;
+    font-style: italic;
+}
+
+/* Bond / unbond dialog */
+
+/* Same reasoning as `.apparition-fix-editor-form` above - `manage-
+   apparitions.hbs`'s PARTS also declares `scrollable: [""]`, so this root
+   element needs its own bounded height + overflow-y for that to do
+   anything once the (now expandable, see .apparition-fix-grants below)
+   bonded/available lists push the dialog's content past the window's
+   fixed height. */
+.apparition-fix-manage-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.5rem;
+    height: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.apparition-fix-manage-body fieldset {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    border: 1px solid var(--color-border-light-tertiary, #7a7971);
+    border-radius: 4px;
+}
+
+.apparition-fix-manage-body .hint {
+    margin: 0;
+    font-size: var(--font-size-12, 12px);
+    opacity: 0.75;
+}
+
+/* The manual Focus Pool override control - a deliberately simple, always-
+   reliable alternative to this module trying to perfectly track every
+   possible source that can raise or lower the pool's max (see
+   FocusPool.Hint in the localization file for why). */
+.apparition-fix-focus-override-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.apparition-fix-focus-override-row input[type="number"] {
+    width: 4rem;
+    flex: 0 0 auto;
+}
+
+.apparition-fix-apparition-list li.stale {
+    opacity: 0.6;
+}
+
+.apparition-fix-apparition-list .stale-icon {
+    color: var(--color-level-warning, #ff8000);
+}
+
+.apparition-fix-manage-body input[data-role="apparition-search"] {
+    width: 100%;
+}
+
+.apparition-fix-available-list {
+    max-height: 14rem;
+    overflow-y: auto;
+}
+
+.apparition-fix-available-info {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+.apparition-fix-available-info .lores {
+    font-size: var(--font-size-12, 12px);
+    opacity: 0.7;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Bond/unbond button shown at the top of the spellcasting tab when the
+   character has no Apparition Spellcasting / Vessel Spells entry yet. */
+.apparition-fix-manage-standalone {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    width: 100%;
+    margin: 0 0 0.5rem;
+    cursor: pointer;
+}
+
+.apparition-fix-primary-toggle {
+    margin-left: 0.25rem;
+    color: var(--color-text-subtle, inherit);
+    cursor: pointer;
+}
+
+.apparition-fix-primary-toggle.active {
+    color: var(--color-warm-2, goldenrod);
+}
+
+/* Preparation profiles */
+.apparition-fix-profiles {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.apparition-fix-profile-controls,
+.apparition-fix-profile-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+.apparition-fix-profile-controls select {
+    flex: 1 1 12rem;
+    min-width: 0;
+}
+.apparition-fix-profile-controls input {
+    flex: 1 1 12rem;
+    min-width: 0;
+}
+.apparition-fix-profile-actions button {
+    flex: 0 0 auto;
+}
+.apparition-fix-auto-primary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding-top: 0.35rem;
+    border-top: 1px solid var(--color-border-light-tertiary, #7a7971);
+}
+
+/* Diagnostics */
+.apparition-fix-diagnostics table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.apparition-fix-diagnostics th,
+.apparition-fix-diagnostics td {
+    padding: 0.25rem 0.4rem;
+    vertical-align: top;
+}
+.apparition-fix-diagnostics th {
+    text-align: left;
+    width: 55%;
+}
+.apparition-fix-diagnostics tr:nth-child(even) {
+    background: color-mix(in srgb, currentColor 5%, transparent);
+}
+.apparition-fix-diagnostics ul {
+    margin: 0.25rem 0 0.5rem 1.2rem;
+}
+.apparition-fix-diagnostics small {
+    opacity: 0.7;
+    overflow-wrap: anywhere;
+}
+
+/* Vessel Spells list on the character sheet: the Vessels of non-primary apparitions stay listed but unusable. */
+.apparition-fix-inactive-name {
+    text-decoration: line-through;
+    opacity: 0.6;
+}
+
+button.cast-spell.apparition-fix-inactive,
+.apparition-fix-inactive[data-action="cast-spell"] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.apparition-fix-swap-primary {
+    cursor: pointer;
+}
+
+/* Wandering Feats */
+.apparition-fix-wandering-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.apparition-fix-wandering-list li {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--color-border-light-tertiary, #ccc);
+}
+
+.apparition-fix-wandering-list li.empty {
+    opacity: 0.7;
+    border-bottom: none;
+}
+
+.apparition-fix-wandering-list .wandering-current,
+.apparition-fix-wandering-list .wandering-retrain,
+.apparition-fix-wandering-list .wandering-requirements {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.apparition-fix-wandering-list img {
+    width: 1.6rem;
+    height: 1.6rem;
+    border: none;
+}
+
+.apparition-fix-wandering-list .name {
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.apparition-fix-wandering-list .level,
+.apparition-fix-wandering-list .other,
+.apparition-fix-wandering-list .label {
+    opacity: 0.75;
+}
+
+.apparition-fix-wandering-list select {
+    flex: 1;
+    min-width: 0;
+}
+
+.apparition-fix-wandering-lores {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.lore-chip {
+    padding: 0 0.4rem;
+    border: 1px solid var(--color-border-light-tertiary, #999);
+    border-radius: 0.6rem;
+    font-size: var(--font-size-12, 0.8rem);
+}
+
+.lore-chip.have {
+    color: var(--color-level-success, #1a7f37);
+}
+
+.lore-chip.missing,
+.apparition-fix-option-requirement.unmet {
+    color: var(--color-level-error, #b3261e);
+}
+
+.apparition-fix-option-requirement {
+    opacity: 0.85;
+}
+
+.apparition-fix-requirement-warning {
+    color: var(--color-level-error, #b3261e);
+    font-weight: bold;
+}
+
+.apparition-fix-wandering-list li.unmet .name {
+    color: var(--color-level-error, #b3261e);
+}
+
+.apparition-fix-search-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.apparition-fix-search-row input {
+    flex: 1;
+}
+
+/* Preview of the apparitions in the selected preparation profile. */
+.apparition-fix-profile-preview ul {
+    list-style: none;
+    margin: 0.3rem 0 0;
+    padding: 0;
+}
+
+.apparition-fix-profile-preview li {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.apparition-fix-profile-preview li img {
+    width: 1.4rem;
+    height: 1.4rem;
+    border: none;
+}
+
+.apparition-fix-profile-preview li .state {
+    margin-left: auto;
+    opacity: 0.8;
+}
+
+.apparition-fix-profile-preview li.missing .state,
+.apparition-fix-profile-preview li.unbind {
+    color: var(--color-level-error, #b3261e);
+}
+
+.apparition-fix-profile-preview li.empty {
+    opacity: 0.7;
+}
+
+/* Settings: suitable apparitions of the wandering feats. */
+.apparition-fix-wandering-settings-list,
+.apparition-fix-wandering-settings .suitable,
+.apparition-fix-wandering-checklist {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.apparition-fix-wandering-settings-list > li {
+    border-bottom: 1px solid var(--color-border-light-tertiary, #ccc);
+}
+
+.apparition-fix-wandering-settings-list summary {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.2rem 0;
+    cursor: pointer;
+}
+
+.apparition-fix-wandering-settings-list summary img,
+.apparition-fix-wandering-settings .suitable img,
+.apparition-fix-wandering-checklist img {
+    width: 1.4rem;
+    height: 1.4rem;
+    border: none;
+}
+
+.apparition-fix-wandering-settings-list summary .name {
+    flex: 1;
+    font-weight: bold;
+}
+
+.apparition-fix-wandering-settings-list .count,
+.apparition-fix-wandering-settings-list .level {
+    opacity: 0.75;
+}
+
+.apparition-fix-wandering-settings .badge {
+    padding: 0 0.4rem;
+    border: 1px solid var(--color-border-light-tertiary, #999);
+    border-radius: 0.6rem;
+    font-size: var(--font-size-12, 0.8rem);
+}
+
+.apparition-fix-wandering-settings-body {
+    padding: 0.2rem 0 0.5rem 1.8rem;
+}
+
+.apparition-fix-wandering-settings-body .tools {
+    display: flex;
+    gap: 0.6rem;
+    justify-content: flex-end;
+}
+
+.apparition-fix-wandering-settings .suitable li {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.1rem 0;
+}
+
+.apparition-fix-wandering-settings .suitable li .name {
+    flex: 1;
+}
+
+.apparition-fix-wandering-settings .suitable li.added .name {
+    font-style: italic;
+}
+
+.apparition-fix-wandering-settings .suitable li.unknown {
+    color: var(--color-level-error, #b3261e);
+}
+
+.apparition-fix-wandering-settings .add-row {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.3rem;
+}
+
+.apparition-fix-wandering-settings .add-row select {
+    flex: 1;
+    min-width: 0;
+}
+
+.apparition-fix-wandering-checklist {
+    max-height: 16rem;
+    overflow-y: auto;
+}
+
+.apparition-fix-wandering-checklist label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.apparition-fix-wandering-checklist small {
+    opacity: 0.7;
+}
+
+/* Relinquish Control: the permanent apparition. */
+.apparition-fix-permanent-current,
+.apparition-fix-permanent-choose {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.3rem;
+}
+
+.apparition-fix-permanent-current img {
+    width: 1.6rem;
+    height: 1.6rem;
+    border: none;
+}
+
+.apparition-fix-permanent-current .label {
+    opacity: 0.75;
+}
+
+.apparition-fix-permanent-choose select {
+    flex: 1;
+    min-width: 0;
+}
+
+.apparition-fix-permanent-pin {
+    opacity: 0.8;
+}
