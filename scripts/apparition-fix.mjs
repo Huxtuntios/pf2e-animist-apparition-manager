@@ -546,11 +546,20 @@ Hooks.on("renderCharacterSheetPF2e", (app, html) => {
     const entry = getApparitionEntry(actor);
     if (entry) {
         for (const castButton of root.querySelectorAll('[data-action="cast-spell"], button.cast-spell')) {
-            if (!(castButton instanceof HTMLElement) || castButton.dataset.apparitionFixBound === "true") continue;
+            if (!(castButton instanceof HTMLElement)) continue;
 
             const spell = getEntrySpellForControl(actor, entry, castButton);
             if (!spell || spell.isCantrip) continue;
 
+            // PF2e marks the row expended when its displayed rank has no slots.
+            // Apparition spells can still use this module's higher-rank picker:
+            // reflect availability across all eligible ranks, not just this row.
+            // This is sheet DOM only: do not restore slots or change spell data.
+            const hasAvailableSlot = getAvailableRanks(entry, spell).some(({ value }) => value > 0);
+            castButton.closest("[data-item-id]")?.toggleAttribute("data-slot-expended", !hasAvailableSlot);
+
+            // Re-evaluate availability on repeated renders, but bind only once.
+            if (castButton.dataset.apparitionFixBound === "true") continue;
             castButton.dataset.apparitionFixBound = "true";
             castButton.dataset.action = CUSTOM_ACTION;
             castButton.addEventListener("click", (event) => {
