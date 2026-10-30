@@ -280,7 +280,8 @@ async function diagnose(actor) {
         const pack = game.packs.get(packId);
         if (!pack) continue;
         try {
-            const index = await pack.getIndex({ fields: ["system.traits", "system.traits.otherTags"] });
+            // Request the parent only: overlapping parent/child fields collide in the v14 server projection.
+            const index = await pack.getIndex({ fields: ["system.traits"] });
             const apparitions = index.filter(
                 (entry) => entry.type === "feat" && entry.system?.traits?.otherTags?.includes("animist-apparition"),
             );

@@ -2,7 +2,7 @@
   "id": "pf2e-dailies-apparition-fix",
   "title": "Pf2e Animist Apparition Manager",
   "description": "Standalone Animist manager for Pathfinder 2e: bonding apparitions, Vessel spells, the primary set, the focus pool, Wandering Feats and custom apparitions. Works with or without PF2e Dailies; optional PF2e Avatars integration.",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "authors": [
     {
       "name": "Huxtuntios",
@@ -11,7 +11,7 @@
   ],
   "url": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager",
   "manifest": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager/releases/latest/download/module.json",
-  "download": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager/releases/download/v1.1.8/module.zip",
+  "download": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager/releases/download/v1.1.9/module.zip",
   "bugs": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager/issues",
   "readme": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager/blob/main/README.md",
   "license": "https://github.com/Huxtuntios/pf2e-animist-apparition-manager/blob/main/LICENSE",
