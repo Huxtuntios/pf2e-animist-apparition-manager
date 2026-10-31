@@ -1,0 +1,605 @@
+/* Scoped manager layout. Never changes character sheets or spell row styling. */
+.apparition-fix-manage .window-content {
+    display: flex;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+}
+.apparition-manager {
+    /* PF2e character-sheet tokens, not an independent OS-based palette. */
+    --am-bg: var(--bg, #f8f4f1);
+    --am-text: var(--text-dark, var(--color-text-dark-primary, #1c1c1c));
+    --am-surface: color-mix(in srgb, var(--am-bg) 95%, var(--am-text) 5%);
+    --am-muted: var(--sub, #605856);
+    --am-line: var(--color-border-divider, #baa991);
+    --am-accent: var(--primary, var(--color-pf-primary, #5e0000));
+    --am-on-accent: var(--text-light, #f5efe0);
+    --am-secondary: var(--secondary, var(--color-pf-secondary, #171f69));
+    --am-accent-soft: color-mix(in srgb, var(--am-accent) 9%, var(--am-bg) 91%);
+    --am-warning: var(--color-rarity-uncommon, #98513d);
+    --am-warning-soft: color-mix(in srgb, var(--am-warning) 8%, var(--am-bg) 92%);
+    color: var(--am-text);
+    background: var(--am-bg);
+    font: 14px/1.4 var(--font-body, system-ui, sans-serif);
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    container-type: inline-size;
+}
+.apparition-manager *,
+.apparition-manager *::before,
+.apparition-manager *::after {
+    box-sizing: border-box;
+}
+.apparition-manager [hidden] {
+    display: none !important;
+}
+.apparition-manager h2,
+.apparition-manager h3,
+.apparition-manager h4 {
+    font-family: inherit;
+    color: inherit;
+    margin: 0;
+    border: 0;
+    text-shadow: none;
+}
+.apparition-manager h2 {
+    font-size: 16px;
+    font-weight: 650;
+    overflow-wrap: anywhere;
+}
+.apparition-manager h3 {
+    font-size: 14px;
+    font-weight: 650;
+}
+.apparition-manager h4 {
+    font-size: 13px;
+    margin: 16px 0 10px;
+}
+.apparition-manager p {
+    margin: 6px 0;
+}
+.apparition-manager ul,
+.apparition-manager ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.apparition-manager button,
+.apparition-manager input,
+.apparition-manager select {
+    font: inherit;
+    color: inherit;
+    border: 1px solid var(--am-line);
+    background: var(--am-surface);
+    border-radius: 6px;
+    box-shadow: none;
+    min-width: 0;
+    height: auto;
+}
+.apparition-manager button {
+    min-height: 44px;
+    padding: 7px 10px;
+    cursor: pointer;
+    line-height: 1.35;
+    width: auto;
+    white-space: normal;
+}
+.apparition-manager button:hover {
+    background: var(--am-accent-soft);
+    color: var(--am-accent);
+    border-color: var(--am-accent);
+    text-shadow: none;
+}
+.apparition-manager button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+.apparition-manager :is(button, input, select, summary):focus-visible {
+    outline: 2px solid var(--am-accent);
+    outline-offset: 2px;
+}
+.apparition-manager input,
+.apparition-manager select {
+    min-height: 44px;
+    padding: 7px 9px;
+    width: 100%;
+}
+.apparition-manager label {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+}
+.apparition-manager .am-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px 2px;
+    flex: 0 0 auto;
+}
+.apparition-manager .am-eyebrow {
+    color: var(--am-muted);
+    margin: 0 0 3px;
+    font-size: 12px;
+}
+.apparition-manager .am-focus {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.apparition-manager .am-focus span {
+    font-size: 12px;
+    color: var(--am-muted);
+}
+.apparition-manager .am-focus strong {
+    font-size: 16px;
+}
+.apparition-manager .am-attunement {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 12px;
+    padding: 0 12px 4px;
+    font-size: 12px;
+    flex: 0 0 auto;
+}
+.apparition-manager .am-attunement p {
+    margin-bottom: 0;
+    font-size: 12px;
+}
+.apparition-manager .am-muted,
+.apparition-manager .hint {
+    color: var(--am-muted);
+}
+.apparition-manager .am-tabs {
+    display: flex;
+    gap: 4px;
+    border-block: 1px solid var(--am-line);
+    padding: 2px 8px;
+    flex: 0 0 auto;
+}
+.apparition-manager .am-tabs button {
+    flex: 1;
+    border-color: transparent;
+    background: transparent;
+}
+.apparition-manager .am-tabs button[aria-selected="true"] {
+    color: var(--am-on-accent);
+    background: var(--am-accent);
+    font-weight: 650;
+}
+.apparition-manager .am-panels {
+    flex: 1 1 0;
+    min-height: 100px;
+    overflow: hidden;
+    display: flex;
+}
+.apparition-manager [role="tabpanel"] {
+    width: 100%;
+    min-height: 0;
+}
+.apparition-manager .am-apparitions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+}
+.apparition-manager .am-column {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    padding: 8px;
+    gap: 6px;
+}
+.apparition-manager .am-column + .am-column {
+    border-left: 1px solid var(--am-line);
+}
+.apparition-manager .am-section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.apparition-manager .am-count {
+    color: var(--am-muted);
+    font-size: 12px;
+    background: var(--am-surface);
+    padding: 1px 7px;
+    border-radius: 4px;
+    border: 1px solid var(--am-line);
+}
+.apparition-manager .am-cards {
+    overflow: auto;
+    flex: 1;
+    min-height: 0;
+    padding: 1px 4px 5px 1px;
+    scrollbar-gutter: stable;
+}
+.apparition-manager .am-card {
+    --am-card-actions-width: 92px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 2px;
+    border: 1px solid var(--am-line);
+    border-radius: 6px;
+    background: var(--am-surface);
+    margin-bottom: 6px;
+    padding: 8px;
+}
+.apparition-manager .am-card-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    grid-column: 1 / -1;
+    grid-row: 1;
+}
+.apparition-manager .am-card-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    flex: 1;
+}
+.apparition-manager .am-portrait {
+    width: 30px;
+    height: 30px;
+    object-fit: cover;
+    border: 0;
+    border-radius: 4px;
+    flex: 0 0 30px;
+}
+.apparition-manager .am-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 2px;
+}
+.apparition-manager .am-badge {
+    font-size: 12px;
+    padding: 0 5px;
+    border-radius: 4px;
+    border: 1px solid var(--am-line);
+}
+.apparition-manager .am-primary {
+    background: var(--am-accent);
+    color: var(--am-on-accent);
+    border-color: transparent;
+}
+.apparition-manager .am-lores {
+    color: var(--am-muted);
+    font-size: 12px;
+    margin: 2px 0;
+    grid-column: 1 / -1;
+    grid-row: 2;
+}
+.apparition-manager .am-card-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+    margin: 0;
+    flex-wrap: nowrap;
+    grid-column: 2;
+    grid-row: 3;
+    align-self: start;
+    z-index: 1;
+}
+.apparition-manager .am-icon {
+    min-width: 44px;
+    padding-inline: 6px;
+    flex-shrink: 0;
+}
+.apparition-manager .am-text-action {
+    color: var(--am-secondary);
+}
+.apparition-manager details {
+    min-width: 0;
+}
+.apparition-manager summary {
+    cursor: pointer;
+    min-height: 44px;
+    padding: 6px 0;
+    color: var(--am-muted);
+    font-size: 12px;
+}
+.apparition-manager details[open] > summary {
+    margin-bottom: 6px;
+}
+.apparition-manager .am-grants button {
+    display: flex;
+    gap: 7px;
+    width: 100%;
+    align-items: center;
+    border: 0;
+    text-align: left;
+    padding: 6px 3px;
+    font-size: 13px;
+}
+.apparition-manager .am-grants img,
+.apparition-manager .am-preview-rows img {
+    width: 24px;
+    height: 24px;
+    border: 0;
+    flex-shrink: 0;
+    object-fit: cover;
+    border-radius: 3px;
+}
+.apparition-manager .am-rank {
+    color: var(--am-muted);
+    font-size: 12px;
+    flex-shrink: 0;
+}
+.apparition-manager .am-search {
+    display: flex;
+    gap: 5px;
+}
+.apparition-manager .am-search input {
+    flex: 1;
+}
+.apparition-manager .am-notice {
+    padding: 10px;
+    background: var(--am-accent-soft);
+    font-size: 12px;
+    border-radius: 6px;
+    overflow-wrap: anywhere;
+}
+.apparition-manager .am-warning {
+    color: var(--am-warning);
+    background: var(--am-warning-soft);
+}
+.apparition-manager .am-notice button {
+    font-size: 14px;
+    min-height: 44px;
+    margin-top: 5px;
+}
+.apparition-manager .am-empty {
+    color: var(--am-muted);
+    padding: 22px 8px;
+    text-align: center;
+}
+.apparition-manager .am-scroll {
+    overflow: auto;
+    padding: 10px 12px;
+    scrollbar-gutter: stable;
+}
+.apparition-manager fieldset {
+    border: 1px solid var(--am-line);
+    border-radius: 6px;
+    margin: 0 0 10px;
+    padding: 8px;
+    min-width: 0;
+    background: var(--am-surface);
+}
+.apparition-manager legend {
+    font-size: 12px;
+    font-weight: 650;
+    padding: 0 6px;
+}
+.apparition-manager fieldset > * + * {
+    margin-top: 10px;
+}
+.apparition-manager .hint {
+    font-size: 12px;
+}
+.apparition-manager .am-profile-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 8px 0;
+}
+.apparition-manager .am-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    align-items: center;
+    margin-block: 10px;
+}
+.apparition-manager .am-accent {
+    color: var(--am-on-accent);
+    background: var(--am-secondary);
+    border-color: var(--am-secondary);
+}
+.apparition-manager .am-preview-rows li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--am-line);
+}
+.apparition-manager .am-preview-rows strong {
+    flex: 1;
+    min-width: 90px;
+    overflow-wrap: anywhere;
+}
+.apparition-manager .am-advanced {
+    flex: 0 0 auto;
+    border-top: 1px solid var(--am-line);
+}
+.apparition-manager .am-advanced > summary {
+    padding: 6px 12px;
+    min-height: 44px;
+    font-size: 12px;
+    color: var(--am-text);
+}
+.apparition-manager .am-advanced[open] > summary {
+    margin: 0;
+}
+.apparition-manager .am-advanced-body {
+    padding: 0 20px 12px;
+    max-height: 200px;
+    overflow: auto;
+}
+.apparition-manager .apparition-fix-permanent-current,
+.apparition-manager .wandering-current {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+.apparition-manager .apparition-fix-permanent-current img,
+.apparition-manager .wandering-current img {
+    width: 28px;
+    height: 28px;
+    border: 0;
+}
+.apparition-manager .apparition-fix-permanent-choose,
+.apparition-manager .wandering-retrain {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+.apparition-manager .apparition-fix-permanent-choose select,
+.apparition-manager .wandering-retrain select {
+    flex: 1 1 180px;
+    width: 0;
+}
+.apparition-manager .apparition-fix-wandering-list > li {
+    padding: 12px 0;
+    border-top: 1px solid var(--am-line);
+}
+.apparition-manager .wandering-requirements {
+    margin-block: 7px;
+    font-size: 12px;
+}
+.apparition-manager .apparition-fix-option-requirement {
+    display: block;
+    font-size: 12px;
+    margin-top: 7px;
+}
+@container (max-width: 640px) {
+    .apparition-manager .am-apparitions {
+        display: block;
+        overflow: auto;
+    }
+    .apparition-manager .am-column {
+        display: block;
+    }
+    .apparition-manager .am-column + .am-column {
+        border-left: 0;
+        border-top: 1px solid var(--am-line);
+    }
+    .apparition-manager .am-section-heading,
+    .apparition-manager .am-search {
+        margin-bottom: 10px;
+    }
+    .apparition-manager .am-cards {
+        overflow: visible;
+        padding: 0;
+    }
+    .apparition-manager .am-profile-fields {
+        grid-template-columns: 1fr;
+    }
+    .apparition-manager .am-header {
+        padding-inline: 14px;
+    }
+    .apparition-manager .am-attunement {
+        padding-inline: 14px;
+    }
+    .apparition-manager .am-scroll {
+        padding-inline: 14px;
+    }
+    .apparition-manager .am-advanced-body {
+        max-height: 150px;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .apparition-manager * {
+        scroll-behavior: auto;
+        transition: none;
+    }
+}
+
+.apparition-fix-manage {
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+}
+.apparition-manager .wandering-current > button.name {
+    text-align: left;
+    flex: 1;
+}
+
+.apparition-manager .am-icon svg {
+    vertical-align: middle;
+    pointer-events: none;
+}
+.apparition-manager .lore-chip {
+    font-size: 12px;
+}
+
+.apparition-manager .am-abilities button[data-action="open-apparition-source"],
+.apparition-manager .am-abilities button[data-select] {
+    min-width: 44px;
+}
+
+.apparition-manager .am-grants button > span:last-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.apparition-manager .am-rank {
+    max-width: 46%;
+    overflow-wrap: anywhere;
+}
+
+/* Compact cards retain full-width expanded content and independent native buttons. */
+.apparition-manager .am-identity {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 8px;
+    min-width: 0;
+}
+.apparition-manager .am-eyebrow {
+    margin: 0;
+}
+.apparition-manager .am-rules {
+    flex: 0 0 auto;
+}
+.apparition-manager .am-rules[open] {
+    flex-basis: 100%;
+}
+.apparition-manager .am-rules summary {
+    display: list-item;
+    padding: 10px 0;
+}
+.apparition-manager .am-rules p {
+    margin: 0 0 6px;
+}
+.apparition-manager .am-card:has(> .am-card-actions > button:nth-child(3)) {
+    --am-card-actions-width: 140px;
+}
+.apparition-manager .am-card > details {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    min-width: 0;
+}
+.apparition-manager .am-card > details > summary {
+    padding-block: 10px;
+    padding-inline-end: calc(var(--am-card-actions-width) + 8px);
+    margin: 0;
+    line-height: 1.45;
+}
+.apparition-manager .am-card > details[open] > :not(summary) {
+    margin-top: 4px;
+}
+.apparition-manager .am-badges:empty {
+    display: none;
+}
+.apparition-manager .am-card--primary {
+    background: color-mix(in srgb, var(--color-pf-tertiary, #e9d7a1) 35%, var(--am-bg) 65%);
+    border-color: var(--am-accent);
+    box-shadow: inset 4px 0 0 var(--am-accent);
+    padding-inline-start: 10px;
+}
+.apparition-manager .am-card--primary [data-action="toggle-primary"][aria-pressed="true"] {
+    color: var(--am-on-accent);
+    background: var(--am-accent);
+    border-color: var(--am-accent);
+}
+
+/* Compact typography requested for the manager only; keep 44px controls. */
+.apparition-manager .am-card-name > strong {
+    font-size: 15px;
+    line-height: 1.3;
+}

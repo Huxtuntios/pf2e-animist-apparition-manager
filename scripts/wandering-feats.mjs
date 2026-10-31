@@ -36,6 +36,8 @@ import {
     notifyOperationFailed,
 } from "./apparition-fix.mjs";
 
+import { withTimeout } from "./manager-data.mjs";
+
 // Packs searched for replacement feats (world feats are always included).
 const FEAT_PACK_IDS = ["pf2e.feats-srd", "pf2e-anachronism.feats"];
 
@@ -71,6 +73,14 @@ const LORE_REQUIREMENTS = new Map(
 );
 
 let packFeatsPromise = null;
+let wanderingLoadErrors = [];
+function resetWanderingCache() {
+    packFeatsPromise = null;
+    wanderingLoadErrors = [];
+}
+function getWanderingLoadErrors() {
+    return [...wanderingLoadErrors];
+}
 
 /**
  * The keys a Lore name is recognised by: lower case, without "Lore" / "Знания"
@@ -105,31 +115,41 @@ const MARKED_FLAG = "wanderingApparitions";
 
 /** Wandering class feats of the compendium packs, indexed once. */
 function loadPackWanderingFeats() {
-    packFeatsPromise ??= (async () => {
-        const feats = [];
-        for (const packId of FEAT_PACK_IDS) {
-            const pack = game.packs.get(packId);
-            if (!pack) continue;
-            try {
-                const index = await pack.getIndex({ fields: ["system.traits.value", "system.category", "system.level.value"] });
-                for (const entry of index) {
-                    if (entry.type !== "feat" || entry.system?.category !== "class") continue;
-                    const traits = entry.system?.traits?.value ?? [];
-                    if (!traits.includes("animist") || !traits.includes("wandering")) continue;
-                    feats.push(toCandidate(entry));
+    if (packFeatsPromise) return packFeatsPromise;
+    const request = (async () => {
+        const failed = [];
+        const groups = await Promise.all(
+            FEAT_PACK_IDS.map(async (packId) => {
+                const pack = game.packs.get(packId);
+                if (!pack) return [];
+                try {
+                    const index = await withTimeout(
+                        pack.getIndex({ fields: ["system.traits.value", "system.category", "system.level.value"] }),
+                    );
+                    return [...index]
+                        .filter(
+                            (entry) =>
+                                entry.type === "feat" &&
+                                entry.system?.category === "class" &&
+                                entry.system?.traits?.value?.includes("animist") &&
+                                entry.system.traits.value.includes("wandering"),
+                        )
+                        .map(toCandidate);
+                } catch (error) {
+                    failed.push(packId);
+                    console.error(`${MODULE_ID} | Failed to index feat pack ${packId}`, error);
+                    return [];
                 }
-            } catch (error) {
-                console.error(`${MODULE_ID} | Failed to index feat pack ${packId}`, error);
-            }
+            }),
+        );
+        if (packFeatsPromise === request) {
+            wanderingLoadErrors = failed;
+            if (failed.length) packFeatsPromise = null;
         }
-        return feats;
-    })().catch((error) => {
-        console.error(`${MODULE_ID} | Failed to load wandering feats`, error);
-        // Don't keep the failure: the next window tries again.
-        packFeatsPromise = null;
-        return [];
-    });
-    return packFeatsPromise;
+        return groups.flat();
+    })();
+    packFeatsPromise = request;
+    return request;
 }
 
 const toCandidate = (entry) => ({
@@ -150,11 +170,8 @@ async function loadAllWanderingFeats() {
     return [...(await loadPackWanderingFeats()), ...worldFeats];
 }
 
-// Wandering feats come at these levels. A feat of another level (a homebrew one) counts as the nearest
-// of them below it, so it is never left out of the retraining list (level 8 counts as 6, level 18 as 16);
-// below 6 it counts as its own level.
-const STANDARD_LEVELS = [6, 12, 16];
-const getAvailableLevel = (level) => STANDARD_LEVELS.filter((standard) => standard <= level).at(-1) ?? level;
+// Compare actual levels, including homebrew feats; never round down.
+const getAvailableLevel = (level) => Number(level);
 
 // Always on a wandering feat; not offered in the tag picker.
 const MANDATORY_TRAITS = ["animist", "wandering"];
@@ -337,14 +354,25 @@ async function resetFeatRule(featUuid) {
  *   that the tag picker cannot show are kept.
  * @returns {Promise<Item>}
  */
-async function saveCustomWanderingFeat({ item = null, name, img, level, description = "", apparitions, traits = [] }) {
+async function saveCustomWanderingFeat({
+    item = null,
+    name,
+    img,
+    level,
+    description = "",
+    descriptionChanged = true,
+    apparitions,
+    traits = [],
+}) {
+    if (!game.user.isGM) return null;
     const html = description
         .split(/\n+/)
         .map((line) => line.trim())
         .filter(Boolean)
         .map((line) => `<p>${foundry.utils.escapeHTML(line)}</p>`)
         .join("");
-    const system = { level: { value: Math.min(20, Math.max(1, Number(level) || 1)) }, description: { value: html } };
+    const system = { level: { value: Math.min(20, Math.max(1, Math.trunc(Number(level) || 1))) } };
+    if (!item || descriptionChanged) system.description = { value: html };
     const flags = { [MODULE_ID]: { [CUSTOM_FLAG]: true, [MARKED_FLAG]: [...new Set(apparitions)] } };
     const pickable = new Set(getFeatTraitChoices().map((choice) => choice.value));
     const kept = (item?.system?.traits?.value ?? []).filter((trait) => !MANDATORY_TRAITS.includes(trait) && !pickable.has(trait));
@@ -515,6 +543,8 @@ export {
     DEFAULT_WANDERING_FEAT_IMG,
     MANDATORY_TRAITS,
     getFeatTraitChoices,
+    resetWanderingCache,
+    getWanderingLoadErrors,
     getWanderingContext,
     replaceWanderingFeat,
     loadAllWanderingFeats,

@@ -1,5 +1,16 @@
 # Pf2e Animist Apparition Manager
 
+**1.3.3:** smaller manager typography: 14 px body, 15 px apparition names, 12 px labels; 44 px click targets preserved. Sheet colors, primary highlights and mechanics are unchanged. [Notes (Russian)](docs/UPDATE-1.3.3.ru.md).
+
+**1.3.2:** compact header and apparition cards; primary apparitions now have a warm highlight, burgundy border/stripe and filled star. PF2e sheet colors, lazy loading and game mechanics are preserved. [Notes (Russian)](docs/UPDATE-1.3.2.ru.md).
+
+**1.3.1:** manager colors now follow PF2e character-sheet variables (parchment, burgundy and navy), without a separate blue/gray or OS-based theme. Layout, loading and game mechanics are unchanged. [Notes (Russian)](docs/UPDATE-1.3.1.ru.md).
+
+**1.3.0:** redesigned three-tab manager, immediate actor-only first render, lazy spell/Vessel details, independent Wandering loading, selected-profile-only previews, local retries and client-session UI state. No attunement hard limits. See [update and installation notes (Russian)](docs/UPDATE-1.3.0.ru.md).
+
+**1.2.0:** separate class/archetype casting, informational attunement count (no cap enforcement), exact Wandering feat levels, corrected Relinquish Control choice, real signature spell data and Spirit Familiar linkage. See [update notes (Russian)](docs/UPDATE-1.2.0.ru.md). Back up your world before upgrading; legacy managed archetype casting is converted to prepared casting.
+
+
 [Русская версия](README.ru.md)
 
 A standalone manager for the **Pathfinder 2e Animist** in **Foundry VTT 14**. Bond apparitions, keep their spells, Vessels and Lore skills in order, choose the primary apparitions, and let the focus pool and the nightly cleanup follow along - all from the character sheet and one management window, without **PF2e Dailies**.
@@ -24,7 +35,7 @@ It can sit next to PF2e Dailies (only Dailies' own Animist daily is switched off
    For a specific version, use the manifest attached to that version on the [releases page](https://github.com/Huxtuntios/pf2e-animist-apparition-manager/releases).
 2. Enable **Pf2e Animist Apparition Manager** in your world.
 3. Open an Animist's character sheet, go to the **Spellcasting** tab and press **Manage Animist Abilities** at the top.
-4. Bond apparitions with the **Bond** button, or with **Bond a random apparition** next to the search field.
+4. Bond apparitions with the **chain icon** (Bond), or with **Bond a random apparition** next to the search field.
 
 The module id is `pf2e-dailies-apparition-fix`; settings, flags and the API live under it.
 
@@ -37,14 +48,17 @@ The module id is `pf2e-dailies-apparition-fix`; settings, flags and the API live
 - **Spells from class feats.** Found by exact compendium id, added once a day with the other apparition spells and removed with the feat: Heal and Harm (Embodiment of the Balance), Avatar (Supreme Incarnation, which also gives the 10th-rank slot at level 19), Animal Form (Walk the Wilds), Aerial Form (Wind Seeker) and Monstrosity Form (Monstrous Inclinations). A spell above the entry's highest rank is held back until the entry has a slot for it.
 - **Lore skills.** On PF2e 8.6+ each Lore is a Rule Element on the apparition feat: trained, expert from level 8, master from level 16, updated when the character levels up. Lore names are read in English, in Russian and in the Russian translation's double names such as "Знания фей (Fey) Lore".
 - **Class features.** Every bonded apparition is granted by Apparition Attunement (Animist Dedication if that is all the character has), so the sheet lists it nested under that feature.
-- **Relinquish Control.** A character with the feat gets a section to choose the permanent apparition. It is bonded at once and again after every night's rest, kept when a profile is applied or yesterday's set is restored, marked with a pin, and cannot be unbonded until another one is chosen.
+- **Relinquish Control.** Fixed choice when the feat is gained. Changing it is labelled retraining/correction with confirmation, not a GM-only lock. It may be unbonded and need not be primary. Profiles/repair do not force it back; existing overnight attunement does not force primary.
+- **Spirit Familiar.** Link an apparition and optionally a familiar Actor. Mark destruction manually; benefits are suspended while the apparition stays attuned. Shared benefits survive via other active apparitions. Explicit remanifestation at daily preparations/correction restores benefits, not spent slots. No familiar Actor is deleted or recreated.
+- **Archetype.** Dedication grants a Wisdom-based prepared divine entry with two cantrip slots and no automatic Vessel. Basic/Expert/Master spellcasting feats grant archetype slots; Apparition Magic uses a separate apparition-only prepared entry. Preparation remains native PF2e.
+- **Attunement count.** Informational text only; no cap, forced deletion or quantity confirmation.
 - **Nightly cleanup.** On `pf2e.restForTheNight` the module's temporary feats, entries, spells and Lore are removed after a snapshot of the day's set is saved. **Restore yesterday** brings it back; **Clean up leftovers** removes old or orphaned data only, never the current day.
 - **Profiles, diagnostics, repair.** Save a set of apparitions and primaries as a preparation profile and apply it later; the preview shows what applying it would do. **Diagnostics** reports the actor's state and **Repair actor** rebuilds it in one click.
 - **Built-in macro.** A GM client creates a "Bond/Unbond Apparition" world macro once; it opens the same window from the hotbar.
 
 ### Wandering Feats
 
-For an Animist, or any character with a wandering feat, the window lists each wandering feat with **every animist wandering class feat of the level it was taken at or lower**: a feat taken at 14 can become a level 2, 6, 12 or 14 one. Choices come from the PF2e feats pack, the `pf2e-anachronism` pack and world feats; a feat the character already has is not offered again. A feat of a level other than 6, 12 or 16 (a homebrew one) counts as the nearest of those below it, so it is never left out.
+For an Animist, or any character with a wandering feat, the window lists each wandering feat with **every animist wandering class feat of the level it was taken at or lower**: a feat taken at 14 can become a level 2, 6, 12 or 14 one. Choices come from the PF2e feats pack, the `pf2e-anachronism` pack and world feats; a feat the character already has is not offered again. Nonstandard feats use their actual level, without rounding to 6/12/16.
 
 Some wandering feats need an attuned apparition of a certain kind. That requirement is written only in the feat's description, so the module keeps a **list of suitable apparitions per feat**:
 
@@ -60,7 +74,7 @@ In the same settings window a GM can **create a custom wandering feat**: name, i
 
 The maximum is kept by one Rule Element on Apparition Attunement (Animist Dedication if that is all the character has), recomputed whenever the bonded apparitions or the primary set change:
 
-- PF2e adds 1 to the maximum for every non-cantrip focus spell, and every Vessel spell is one. The Vessels of apparitions that are **not primary** are taken off again with a *subtract* rule: with three bonded apparitions and one primary the maximum is 1; with two primaries it is 2.
+- PF2e adds 1 to the maximum for every non-cantrip focus spell, and every Vessel spell is one. The Vessels of apparitions that are **not primary** are taken off again with a *subtract* rule: this adjusts the inactive Vessel contribution. Other focus spells and PF2e Third/Fourth Apparition rules also affect the final maximum; their bonuses are not added a second time by this module.
 - With **Circle of Spirits** nothing is subtracted: the pool is the number of focus spells or of attuned apparitions, whichever is higher (maximum 3), through an *upgrade* rule. The primary set is not enlarged.
 - **Manual maximum:** the window has a **Manual focus maximum** field (*Set* / *Back to automatic*). It overrides the automatic value until reset, is stored on the character and survives the night's rest.
 
@@ -143,3 +157,7 @@ The Animist handling follows the approach of [PF2e Dailies](https://github.com/r
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### 1.1.10 regression tests
+
+`npm run test:browser` runs 45 isolated DOM regression tests with mocked Foundry documents. It requires Chrome/Chromium in PATH or a `CHROME_BIN` environment variable. These tests do not replace live-world integration testing. See the [Russian audit and acceptance checklist](docs/AUDIT-1.1.10.ru.md) for fixes and limitations.

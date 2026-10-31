@@ -65,7 +65,7 @@
       "NoRandomApparition": "There is no apparition to choose from.",
       "PermanentSet": "{name} is now your permanent apparition.",
       "PermanentMissing": "Your permanent apparition could not be found: {name}",
-      "PermanentLocked": "This is your permanent apparition (Relinquish Control). Choose another one to change it."
+      "PermanentLocked": "This is the Relinquish Control choice; remember to attune to it at daily preparations."
     },
     "CustomApparition": {
       "FolderName": "Custom Apparitions",
@@ -202,7 +202,7 @@
         "Apply": "Apply",
         "Delete": "Delete",
         "RestoreYesterday": "Restore yesterday",
-        "Hint": "Profiles store the bonded apparitions and primary selection. Enter any name you like; saving the selected profile updates it, while a different name creates a new profile.",
+        "Hint": "A profile stores bonded and primary apparitions. Select a profile to update or rename it. To create one, choose the empty option and enter a name; an existing name updates the matching profile.",
         "PreviewPrimary": "Primary apparition in this profile",
         "PreviewBonded": "bonded",
         "PreviewToBind": "will be bonded",
@@ -221,12 +221,12 @@
       "OpenApparitionHint": "Open the original apparition",
       "Permanent": {
         "Title": "Relinquish Control",
-        "Hint": "This feat ties you to one apparition. Choose it here; it is attuned automatically after every night's rest, and it cannot be unbound until you change it.",
+        "Hint": "Chosen when Relinquish Control is gained; must be included in daily attunement. It need not be primary and can be dispersed/unbound. Profiles and repair do not automatically restore it. Change the fixed choice only for retraining or correction.",
         "Current": "Permanent apparition",
         "None": "not chosen yet",
         "Choose": "Choose an apparition...",
         "Set": "Make permanent",
-        "Pinned": "Permanent apparition (Relinquish Control): attuned automatically every day"
+        "Pinned": "Required daily attunement; not necessarily primary"
       }
     },
     "Diagnostics": {
@@ -291,12 +291,76 @@
         "NameRequired": "Give the feat a name.",
         "Saved": "Custom wandering feat \"{name}\" saved."
       },
-      "LevelHint": "Wandering feats are normally level 6, 12 or 16. A feat of another level works too: for retraining it counts as the nearest of those levels below it (level 8 counts as 6, level 18 as 16; below 6 it counts as its own level), so it is still offered.",
+      "LevelHint": "Replacement feats are compared using their actual level, including custom feats. No rounding is applied.",
       "Traits": "Tags",
       "TraitsAdd": "Add a tag...",
       "TraitsEmpty": "No extra tags",
       "TraitsRemove": "Remove this tag",
       "TraitsHint": "Optional extra feat tags. Animist and Wandering are always applied."
+    },
+    "Rules": {
+      "AttunementCount": "Attuned apparitions: {count}. Rules allowance for this character: {expected}.",
+      "ArchetypeHint": "Animist archetype: one bonded apparition; changing the bond takes 1 day of downtime. This text does not block manual changes. Prepared divine spells use Wisdom. Apparition Magic has a separate apparition-only entry.",
+      "ClassHint": "Class guideline: 2 apparitions, 3 from level 7, 4 from level 15. This is informational; additional choices are allowed.",
+      "RestrictedEntry": "Apparition Magic — apparition spells only",
+      "PermanentChangeTitle": "Retraining / correct the choice",
+      "PermanentChangeHint": "Relinquish Control fixes this choice when the feat is gained. Changing it here is retraining or a manual correction, not a daily choice. Continue?"
+    },
+    "Familiar": {
+      "Title": "Spirit Familiar",
+      "Hint": "Choose the apparition manifested as a familiar during daily preparations. Mark death/destruction manually; HP is not used. Losing the familiar removes this apparition’s benefits until remanifestation at the next daily preparations. Unbonding the apparition marks the familiar destroyed. No familiar Actor is deleted. Editing the link is a manual correction, not a daily free switch.",
+      "Apparition": "Apparition",
+      "Actor": "Familiar Actor",
+      "NoActor": "Track without a linked Actor",
+      "Link": "Save link",
+      "Active": "Familiar manifested; apparition benefits active.",
+      "Destroyed": "Familiar destroyed; linked apparition benefits suspended.",
+      "MarkDestroyed": "Mark familiar destroyed",
+      "Remanifest": "Manifest at daily preparations / correction",
+      "RemanifestHint": "Remanifestation is available at your next daily preparations. Confirm that you are preparing or making a manual correction. This restores apparition benefits, not spent spell slots. The familiar Actor itself is not recreated.",
+      "BenefitsLost": "— familiar benefits suspended",
+      "RelinkHint": "Changing the manifested apparition here is a daily-preparation choice or a manual correction. Continue?"
+    },
+    "ManagerUI": {
+      "Class": "Animist · class",
+      "Archetype": "Animist · archetype",
+      "Focus": "Focus",
+      "Navigation": "Manager sections",
+      "Apparitions": "Apparitions",
+      "Abilities": "Abilities",
+      "Profiles": "Profiles",
+      "Catalog": "Available apparitions",
+      "Primary": "Primary",
+      "Permanent": "Permanent choice",
+      "BenefitsLost": "Familiar: benefits lost",
+      "Stale": "Check grants",
+      "SpellsAndVessel": "Spells and Vessel",
+      "LoadingDetails": "Loading spell details…",
+      "DetailsError": "Some spell details could not be loaded.",
+      "Retry": "Retry",
+      "CatalogError": "Some sources are unavailable. The loaded entries remain usable.",
+      "LoadingWandering": "Loading Wandering Feats…",
+      "WanderingError": "Some Wandering Feats could not be loaded.",
+      "ClearSearch": "Clear search",
+      "NoSearch": "No matching apparitions. Try another name or Lore.",
+      "SelectedProfile": "Saved profile",
+      "ProfileName": "Profile name",
+      "Preview": "Changes in this profile",
+      "LoadingProfile": "Loading this profile’s sources…",
+      "ProfileError": "Some profile sources are unavailable. Applying a profile will resolve its sources again.",
+      "SelectProfileHint": "Choose a profile to preview changes, or save the current set.",
+      "Advanced": "Advanced tools",
+      "FocusOverride": "Manual focus maximum",
+      "Set": "Set",
+      "Reset": "Use automatic value",
+      "FocusHint": "Manual non-negative maximum. Reset restores the automatic value, but does not refill spent points.",
+      "FirstRender": "First manager render, ms",
+      "LastContext": "Last local context, ms",
+      "Bonded": "Attuned apparitions",
+      "Timings": "Loading times",
+      "NoAbilities": "This character has no additional abilities to configure yet.",
+      "AttunementCompact": "Attuned: {count} · rules: {expected}",
+      "Rules": "Rules"
     }
   }
 }

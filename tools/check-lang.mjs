@@ -52,7 +52,7 @@ for (const source of sources) {
 // Keys built at run time (`${MODULE_ID}.Group.${name}`) are matched by their prefix.
 const hasKey = (key) => [...en.keys()].some((defined) => defined === `${MODULE_ID}.${key}` || defined.startsWith(`${MODULE_ID}.${key}.`));
 // Flag paths such as `${MODULE_ID}.origin` are not localization keys.
-const FLAG_PATHS = new Set(["apparitions", "identifier", "origin", "temporary", "customApparitionSource"]);
+const FLAG_PATHS = new Set(["apparitions", "identifier", "origin", "temporary", "customApparitionSource", "archetypeProgression"]);
 for (const key of used) if (!FLAG_PATHS.has(key) && !hasKey(key)) errors.push(`used but not defined: ${key}`);
 
 if (errors.length) {

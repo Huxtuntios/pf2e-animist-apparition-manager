@@ -182,6 +182,7 @@ class WanderingFeatEditorApp extends apps.HandlebarsApplicationMixin(apps.Applic
                 (trait) => !MANDATORY_TRAITS.includes(trait) && getFeatTraitChoices().some((choice) => choice.value === trait),
             ),
         };
+        this.originalDescription = this.draft.description;
     }
 
     get title() {
@@ -302,6 +303,7 @@ class WanderingFeatEditorApp extends apps.HandlebarsApplicationMixin(apps.Applic
                     img: this.draft.img,
                     level: this.draft.level,
                     description: this.draft.description,
+                    descriptionChanged: this.draft.description !== this.originalDescription,
                     apparitions: [...this.draft.selected],
                     traits: this.draft.traits,
                 });

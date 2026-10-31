@@ -19,7 +19,6 @@
 import {
     MODULE_ID,
     isEnabled,
-    ordinalString,
     addListenerAll,
     attachIconFallback,
     getSheetRoot,
@@ -27,14 +26,16 @@ import {
     actorCanModify,
     getApparitionKey,
     getBondedApparitionFeats,
-    parseApparitionSpellUuids,
-    parseApparitionVesselUuid,
-    parseApparitionLores,
     apparitionStillGrantsAnything,
     pruneLeftoverApparitions,
     getVesselSpellForApparition,
     getPrimaryVesselState,
     getPermanentApparition,
+    getAttunementSummary,
+    getSpiritFamiliarState,
+    setSpiritFamiliar,
+    markSpiritFamiliarDestroyed,
+    remanifestSpiritFamiliar,
     setPermanentApparition,
     setPrimaryVessel,
     promptPrimaryChange,
@@ -55,13 +56,20 @@ import {
     addApparition,
     removeApparition,
 } from "./apparition-fix.mjs";
-import { getWanderingContext, replaceWanderingFeat } from "./wandering-feats.mjs";
+import { getWanderingContext, replaceWanderingFeat, resetWanderingCache, getWanderingLoadErrors } from "./wandering-feats.mjs";
 import { openCustomApparitionCopy } from "./custom-apparitions.mjs";
 
-const apps = foundry.applications.api;
+import {
+    loadAvailableApparitions,
+    getCatalogErrors,
+    summarizeApparition,
+    getApparitionDetails,
+    resolveManagerDocument,
+    invalidateManagerData,
+    withTimeout,
+} from "./manager-data.mjs";
 
-// What an apparition that grants nothing (or can't be described) shows.
-const NO_GRANTS = { spells: [], vessel: null, lores: [], hasGrants: false };
+const apps = foundry.applications.api;
 
 /**
  * Opens the original item (a compendium entry stays the compendium entry, not a copy on the actor).
@@ -81,137 +89,6 @@ async function openItemSource(uuid, type, fallback = null) {
         console.error(`${MODULE_ID} | Failed to open the original item ${uuid}`, error);
     }
     ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.ManageApparitions.Notify.SourceNotFound`));
-}
-
-/**
- * The spells (and Vessel spell, and Lore skills) a given apparition would
- * grant, resolved for display in the "view spells" disclosure this module
- * adds to both the bonded and available apparition rows - purely
- * informational, never touches the actor. Works on either a live Item
- * document or a lightweight compendium index entry (see
- * `getAvailableApparitions` below), since `parseApparitionSpellUuids` and
- * friends only ever need a `description`/`system.description.value`
- * string to parse, which both shapes provide.
- *
- * @param {Item|object} apparitionItem
- * @returns {Promise<{
- *   spells: { uuid: string, name: string, img: string, rankLabel: string }[],
- *   vessel: { name: string, img: string } | null,
- *   lores: string[],
- *   hasGrants: boolean,
- * }>}
- */
-async function describeApparitionGrants(apparitionItem) {
-    const spellUuids = parseApparitionSpellUuids(apparitionItem);
-    const vesselUuid = parseApparitionVesselUuid(apparitionItem);
-    const lores = parseApparitionLores(apparitionItem);
-
-    const [spellDocs, vesselDoc] = await Promise.all([
-        Promise.all(spellUuids.map((uuid) => fromUuid(uuid))),
-        vesselUuid ? fromUuid(vesselUuid) : null,
-    ]);
-
-    const spells = spellDocs
-        .filter((doc) => doc?.isOfType?.("spell"))
-        .map((doc) => {
-            const rank = doc.baseRank ?? doc.system?.level?.value ?? 1;
-            return {
-                uuid: doc.uuid,
-                name: doc.name,
-                img: doc.img,
-                rank: doc.isCantrip ? 0 : rank,
-                rankLabel: doc.isCantrip ? game.i18n.localize(`${MODULE_ID}.CustomApparition.Cantrip`) : ordinalString(rank),
-            };
-        })
-        .sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
-
-    const vessel = vesselDoc?.isOfType?.("spell") ? { uuid: vesselDoc.uuid, name: vesselDoc.name, img: vesselDoc.img } : null;
-
-    return { spells, vessel, lores, hasGrants: spells.length > 0 || !!vessel || lores.length > 0 };
-}
-
-/**
- * UUIDs of custom apparition feats owned by this module. Custom apparitions
- * are ordinary world feat Items carrying this module's `customApparition`
- * flag; no external registry is required.
- *
- * @returns {string[]}
- */
-function getCustomApparitionUuids() {
-    return game.items.filter((item) => item.type === "feat" && item.getFlag(MODULE_ID, "customApparition")).map((item) => item.uuid);
-}
-
-/**
- * Every apparition available to bond - real compendium apparitions (tagged
- * "animist-apparition", the canonical system trait used by Animist feats)
- * plus this module's own Custom Apparitions - each with the
- * Lore skills it grants, so they can be searched/recognized by Lore too and
- * not just by name (apparitions can be hard to tell apart by name alone).
- *
- * @returns {Promise<{ uuid: string, name: string, img: string, lores: string[] }[]>}
- */
-async function getAvailableApparitions() {
-    const results = [];
-    const seen = new Set();
-    const packIds = ["pf2e.classfeatures", "pf2e-anachronism.class-features"];
-
-    for (const packId of packIds) {
-        const pack = game.packs.get(packId);
-        if (!pack) continue;
-        try {
-            const index = await pack.getIndex({ fields: ["system.traits.otherTags", "system.description.value"] });
-            const entries = index.filter(
-                (entry) =>
-                    entry.type === "feat" && entry.system?.traits?.otherTags?.includes("animist-apparition") && !seen.has(entry.uuid),
-            );
-            for (const entry of entries) seen.add(entry.uuid);
-            const described = await Promise.all(
-                entries.map(async (entry) => {
-                    try {
-                        return {
-                            uuid: entry.uuid,
-                            name: entry.name,
-                            img: entry.img,
-                            ...(await describeApparitionGrants(entry)),
-                        };
-                    } catch (error) {
-                        console.error(`${MODULE_ID} | Failed to describe compendium apparition ${entry.uuid}`, error);
-                        return null;
-                    }
-                }),
-            );
-            results.push(...described.filter(Boolean));
-        } catch (error) {
-            console.error(`${MODULE_ID} | Failed to index apparition pack ${packId}`, error);
-        }
-    }
-
-    const customUuids = getCustomApparitionUuids();
-    for (const uuid of customUuids) {
-        if (seen.has(uuid)) continue;
-        seen.add(uuid);
-        try {
-            const doc = await fromUuid(uuid);
-            if (!doc?.isOfType?.("feat")) continue;
-            results.push({ uuid: doc.uuid, name: doc.name, img: doc.img, ...(await describeApparitionGrants(doc)) });
-        } catch (error) {
-            console.error(`${MODULE_ID} | Failed to resolve custom apparition ${uuid}`, error);
-        }
-    }
-
-    results.sort((a, b) => a.name.localeCompare(b.name, game.i18n.lang));
-    return results;
-}
-
-let availableApparitionsPromise = null;
-function loadAvailableApparitions() {
-    availableApparitionsPromise ??= getAvailableApparitions().catch((error) => {
-        console.error(`${MODULE_ID} | Failed to load available apparitions`, error);
-        // Don't keep the failure: the next window (or reload) tries again.
-        availableApparitionsPromise = null;
-        return [];
-    });
-    return availableApparitionsPromise;
 }
 
 async function showDiagnostics(actor, manager = null) {
@@ -245,6 +122,19 @@ async function showDiagnostics(actor, manager = null) {
                 : game.i18n.localize(`${MODULE_ID}.Diagnostics.DailiesAbsent`),
         ],
     ];
+    if (manager) {
+        const timing = manager.reportPerformance();
+        for (const [label, value] of [
+            ["First render", timing.firstRenderMs],
+            ["Context", timing.lastContextMs],
+            ["Catalog", timing.catalog?.ms],
+            ["Wandering", timing.wandering?.ms],
+            ["Selected profile", timing.profile?.ms],
+        ]) {
+            if (typeof value === "number")
+                rows.push([`${game.i18n.localize(`${MODULE_ID}.ManagerUI.Timings`)} · ${label}`, `${value.toFixed(1)} ms`]);
+        }
+    }
     const table = rows.map(([label, value]) => `<tr><th>${esc(label)}</th><td>${esc(value)}</td></tr>`).join("");
     const missing = (report.entriesWithoutTraits ?? [])
         .slice(0, 8)
@@ -281,236 +171,508 @@ async function showDiagnostics(actor, manager = null) {
     });
 }
 
+// Client-session UI state: no world/actor data is written when browsing.
+const managerUI = new WeakMap();
+const managerReports = new WeakMap();
+const TAB_NAMES = ["apparitions", "abilities", "profiles"];
+const emptyDetails = { spells: [], vessel: null, errors: [] };
+
 class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.ApplicationV2) {
-    /** @param {Actor} actor */
     constructor(actor, options = {}) {
-        super(foundry.utils.mergeObject({ id: `apparition-fix-manage-apparitions-${actor.id}` }, options));
+        const saved = managerUI.get(actor);
+        super(
+            foundry.utils.mergeObject(
+                { id: `apparition-fix-manage-apparitions-${actor.id}`, ...(saved?.size ? { position: saved.size } : {}) },
+                options,
+            ),
+        );
         this.actor = actor;
-        // Availability is intentionally loaded in the background. Waiting for
-        // every compendium UUID to resolve before the first render made the
-        // button feel dead on a cold Foundry session. The management window
-        // must be usable immediately; the list fills itself in when ready.
-        this.available = null;
+        this.uiState = saved ?? { tab: "apparitions", search: "", profileId: "", fields: {}, openKeys: new Set(), scroll: {} };
+        managerUI.set(actor, this.uiState);
+        this.available = [];
         this.availableLoading = true;
-        this.reloadAvailable();
+        this.catalogError = false;
+        this.details = new Map();
+        this.profilePreview = null;
+        this.wanderingState = null;
+        this.closed = false;
+        this.hasRendered = false;
+        this.started = false;
+        this.renderTimer = null;
+        this.metrics = {
+            openedAt: performance.now(),
+            firstRenderMs: null,
+            contextMs: 0,
+            catalog: null,
+            wandering: null,
+            profile: null,
+            details: 0,
+        };
     }
-
-    /**
-     * The saved profiles with a preview of their apparitions: name and icon (from the list of
-     * bondable apparitions, the bonded ones, else resolved from the id), whether it is primary in the
-     * profile, and what applying it would do (already bonded / to bond / not found), plus the
-     * currently bonded apparitions it would unbond.
-     */
-    async #prepareProfiles(bondedFeats) {
-        const known = new Map();
-        for (const entry of this.available ?? []) known.set(entry.uuid, { name: entry.name, img: entry.img });
-        for (const feat of bondedFeats) known.set(getApparitionKey(feat), { name: feat.name, img: feat.img });
-        const bondedKeys = new Set(bondedFeats.map((feat) => getApparitionKey(feat)));
-
-        const profiles = getApparitionProfiles(this.actor);
-        for (const key of new Set(profiles.flatMap((profile) => profile.apparitions))) {
-            if (known.has(key)) continue;
-            const doc = await fromUuid(key).catch(() => null);
-            known.set(key, doc?.isOfType?.("feat") ? { name: doc.name, img: doc.img } : null);
-        }
-
-        return profiles.map((profile) => ({
-            ...profile,
-            label: formatLocalized(`${MODULE_ID}.ManageApparitions.ProfileOption`, {
-                name: profile.name,
-                count: profile.apparitions.length,
-            }),
-            preview: profile.apparitions.map((key) => {
-                const info = known.get(key);
-                return {
-                    name: info?.name ?? key.split(".").pop(),
-                    img: info?.img ?? "systems/pf2e/icons/default-icons/mystery-man.svg",
-                    primary: profile.primary.includes(key),
-                    missing: !info,
-                    bonded: bondedKeys.has(key),
-                };
-            }),
-            toUnbind: bondedFeats.filter((feat) => !profile.apparitions.includes(getApparitionKey(feat))).map((feat) => feat.name),
-        }));
-    }
-
-    /** Bond an apparition (by uuid) to the character. */
-    async bondApparition(uuid) {
-        if (!actorCanModify(this.actor)) return;
-        try {
-            const doc = await fromUuid(uuid);
-            if (!doc?.isOfType?.("feat")) return;
-            await addApparition(this.actor, doc);
-            this.render();
-        } catch (error) {
-            notifyOperationFailed(error);
-        }
-    }
-
-    /**
-     * (Re)load the list of bondable apparitions. Called on open and whenever a
-     * custom apparition is created, edited, imported or deleted.
-     */
-    reloadAvailable() {
-        this.availableLoading = true;
-        this.availableReady = loadAvailableApparitions()
-            .then((available) => {
-                this.available = available;
-                return available;
-            })
-            .catch((error) => {
-                notifyOperationFailed(error);
-                this.available = [];
-                return [];
-            })
-            .finally(() => {
-                this.availableLoading = false;
-                // A render is queued by ApplicationV2, so it is safe to ask
-                // for one while the first is still in flight; that is
-                // exactly the case a plain `element.isConnected` check
-                // missed, leaving "loading" on screen until something else
-                // re-rendered the window. Never re-open a closed window.
-                if (this.state > 0) void this.render();
-            });
-        return this.availableReady;
-    }
-
-    _onRender(context, options) {
-        super._onRender?.(context, options);
-        // Belt and braces: if the list finished loading after this render's
-        // data was prepared, draw it now.
-        if (this.#renderedWhileLoading && !this.availableLoading) void this.render();
-    }
-
-    #renderedWhileLoading = false;
-
     static DEFAULT_OPTIONS = {
         classes: ["apparition-fix", "apparition-fix-manage"],
         window: { icon: "fa-solid fa-ghost", resizable: true },
-        // A fixed height (rather than "auto") is what actually lets the
-        // scrollable part below take over once content overflows it -
-        // "auto" just keeps growing the window past the screen edge.
-        position: { width: 480, height: 640 },
+        position: { width: 820, height: 720 },
     };
-
-    static PARTS = {
-        manage: {
-            template: `modules/${MODULE_ID}/templates/manage-apparitions.hbs`,
-            scrollable: [""],
-        },
-    };
-
+    static PARTS = { manage: { template: `modules/${MODULE_ID}/templates/manage-apparitions.hbs`, scrollable: [] } };
     get title() {
         return formatLocalized(`${MODULE_ID}.ManageApparitions.Title`, { name: this.actor.name });
     }
 
-    async _prepareContext(_options) {
-        const bondedFeats = getBondedApparitionFeats(this.actor);
-        const permanent = getPermanentApparition(this.actor);
-        this.#renderedWhileLoading = this.availableLoading;
-
-        const { primary } = getPrimaryVesselState(this.actor);
-        const primaryIds = new Set(primary);
-
-        const bonded = await Promise.all(
-            bondedFeats.map(async (item) => {
-                // A feat that grants nothing anymore (typically one bonded before
-                // the module flagged its items as temporary, which a rest does
-                // not delete) is listed with a warning rather than hidden. Its old source
-                // UUIDs are deliberately NOT resolved - doing that for a
-                // stale feat is what once left this window loading forever.
-                const grantsAnything = apparitionStillGrantsAnything(this.actor, item);
-                let grants = NO_GRANTS;
-                if (grantsAnything) {
-                    try {
-                        grants = await describeApparitionGrants(item);
-                    } catch (error) {
-                        console.error(`${MODULE_ID} | Failed to describe bonded apparition ${item.uuid}`, error);
-                    }
+    captureUI(root = this.element) {
+        if (!(root instanceof HTMLElement)) return;
+        for (const field of root.querySelectorAll("input[name], select[name], textarea[name]"))
+            this.uiState.fields[field.name] = field.value;
+        this.uiState.search = root.querySelector('[data-role="apparition-search"]')?.value ?? this.uiState.search;
+        this.uiState.profileId = root.querySelector('[name="profileId"]')?.value ?? this.uiState.profileId;
+        for (const details of root.querySelectorAll("details[data-detail-key], details[data-ui-section]")) {
+            const key = details.dataset.detailKey ?? details.dataset.uiSection;
+            if (details.open) this.uiState.openKeys.add(key);
+            else this.uiState.openKeys.delete(key);
+        }
+        for (const scroller of root.querySelectorAll("[data-scroll-key]"))
+            if (!scroller.closest("[hidden]") && scroller.getClientRects().length)
+                this.uiState.scroll[scroller.dataset.scrollKey] = scroller.scrollTop;
+        const focused = root.contains(document.activeElement) ? document.activeElement : null;
+        if (this.pendingProfileId !== undefined) {
+            this.uiState.profileId = this.pendingProfileId;
+            this.uiState.fields.profileId = this.pendingProfileId;
+            // Keep pending selection until the new option is present in the rendered DOM.
+        }
+        if (this.resetFocusInput) {
+            delete this.uiState.fields.focusOverrideInput;
+            // Keep this marker through queued renders until the new input is installed.
+        }
+        this.uiState.focus = focused
+            ? {
+                  name: focused.name,
+                  action: focused.dataset.action,
+                  key: focused.dataset.key,
+                  start: focused.selectionStart,
+                  end: focused.selectionEnd,
+              }
+            : null;
+        const width = this.position?.width,
+            height = this.position?.height;
+        if (typeof width === "number" && typeof height === "number") this.uiState.size = { width, height };
+    }
+    render(options = {}) {
+        if (this.closed) return this;
+        this.captureUI();
+        return super.render(options);
+    }
+    async close(options = {}) {
+        this.captureUI();
+        this.closed = true;
+        clearTimeout(this.renderTimer);
+        managerReports.set(this.actor, this.reportPerformance());
+        return super.close(options);
+    }
+    requestRender() {
+        if (this.closed || !this.hasRendered || this.renderTimer) return;
+        this.renderTimer = setTimeout(() => {
+            this.renderTimer = null;
+            if (!this.closed) void this.render();
+        }, 25);
+    }
+    reportPerformance() {
+        return {
+            version: "1.3.3",
+            foundry: game.version,
+            system: game.system.version,
+            firstRenderMs: this.metrics.firstRenderMs,
+            lastContextMs: this.metrics.contextMs,
+            catalog: this.metrics.catalog,
+            wandering: this.metrics.wandering,
+            profile: this.metrics.profile,
+            detailLoads: this.metrics.details,
+            note: "Client observations, not a controlled benchmark. First render excludes deferred sections.",
+        };
+    }
+    async reloadAvailable({ force = false } = {}) {
+        const token = {};
+        this.catalogToken = token;
+        this.availableLoading = true;
+        this.catalogError = false;
+        const started = performance.now();
+        this.availableReady = loadAvailableApparitions({ force });
+        try {
+            const available = await this.availableReady;
+            if (this.closed || this.catalogToken !== token) return;
+            this.available = available;
+            this.catalogError = getCatalogErrors().length > 0;
+        } catch {
+            if (!this.closed && this.catalogToken === token) this.catalogError = true;
+        } finally {
+            if (!this.closed && this.catalogToken === token) {
+                this.availableLoading = false;
+                this.metrics.catalog = { ms: performance.now() - started, error: this.catalogError, count: this.available.length };
+                this.requestRender();
+            }
+        }
+    }
+    summaryFor(key) {
+        const feat = getBondedApparitionFeats(this.actor).find((item) => getApparitionKey(item) === key);
+        return feat ? summarizeApparition(feat) : this.available.find((entry) => entry.uuid === key);
+    }
+    async loadDetails(key, { force = false } = {}) {
+        const summary = this.summaryFor(key);
+        if (!summary || this.closed) return;
+        const fingerprint = JSON.stringify([summary.spellUuids, summary.vesselUuid, summary.lores, game.i18n.lang]);
+        const old = this.details.get(key);
+        if (!force && old?.fingerprint === fingerprint && ["loading", "ready", "error"].includes(old.status)) return;
+        const state = { fingerprint, status: "loading", data: emptyDetails };
+        this.details.set(key, state);
+        this.requestRender();
+        try {
+            const data = await getApparitionDetails(summary, { force });
+            if (this.closed || this.details.get(key) !== state) return;
+            state.data = data;
+            state.status = data.errors.length ? "error" : "ready";
+        } catch {
+            if (this.details.get(key) === state) state.status = "error";
+        } finally {
+            if (!this.closed) {
+                this.metrics.details++;
+                this.requestRender();
+            }
+        }
+    }
+    wanderingFingerprint() {
+        return JSON.stringify([
+            game.i18n.lang,
+            this.actor.itemTypes.feat.map((feat) => [
+                feat.id,
+                feat._stats?.modifiedTime,
+                feat.system?.level,
+                feat.system?.description?.value,
+            ]),
+            this.available.map((entry) => [entry.uuid, entry.name]),
+            game.settings.get(MODULE_ID, "wanderingFeatRules"),
+        ]);
+    }
+    async ensureWandering({ force = false } = {}) {
+        if (this.closed) return;
+        const fingerprint = this.wanderingFingerprint();
+        if (!force && this.wanderingState?.fingerprint === fingerprint) return;
+        if (force) resetWanderingCache();
+        const state = { fingerprint, status: "loading", data: { show: true, rows: [] } };
+        this.wanderingState = state;
+        const started = performance.now();
+        this.requestRender();
+        try {
+            const data = await withTimeout(
+                getWanderingContext(this.actor, { names: new Map(this.available.map((entry) => [entry.uuid, entry.name])) }),
+            );
+            if (this.closed || this.wanderingState !== state) return;
+            state.data = data;
+            state.status = data.rows?.length && getWanderingLoadErrors().length ? "error" : "ready";
+        } catch {
+            if (this.wanderingState === state) state.status = "error";
+        } finally {
+            if (!this.closed && this.wanderingState === state) {
+                this.metrics.wandering = { ms: performance.now() - started, error: state.status === "error" };
+                this.requestRender();
+            }
+        }
+    }
+    async ensureProfile({ force = false } = {}) {
+        const profile = getApparitionProfiles(this.actor).find((profile) => profile.id === this.uiState.profileId);
+        if (!profile || this.closed) {
+            this.profilePreview = null;
+            return;
+        }
+        const fingerprint = JSON.stringify([profile, game.i18n.lang]);
+        if (!force && this.profilePreview?.fingerprint === fingerprint) return;
+        const state = { id: profile.id, fingerprint, status: "loading", info: new Map() };
+        this.profilePreview = state;
+        const started = performance.now();
+        this.requestRender();
+        const known = new Map([
+            ...this.available.map((entry) => [entry.uuid, entry]),
+            ...getBondedApparitionFeats(this.actor).map((feat) => [getApparitionKey(feat), feat]),
+        ]);
+        const rows = await Promise.all(
+            profile.apparitions.map(async (key) => {
+                if (known.has(key)) return [key, known.get(key)];
+                try {
+                    const doc = await resolveManagerDocument(key, { force });
+                    return [key, doc?.isOfType?.("feat") ? doc : null];
+                } catch {
+                    return [key, { error: true, name: key.split(".").pop() }];
                 }
-
-                const apparitionKey = getApparitionKey(item);
-                const vesselSpell = grantsAnything ? getVesselSpellForApparition(this.actor, item) : null;
-                const isPrimary = !!vesselSpell && primaryIds.has(apparitionKey);
-                return {
-                    id: item.id,
-                    key: apparitionKey,
-                    isPermanent: !!permanent.key && apparitionKey === permanent.key,
-                    name: item.name,
-                    img: item.img,
-                    stale: !grants.hasGrants,
-                    vesselSpellId: vesselSpell?.id ?? null,
-                    vesselIsPrimary: isPrimary,
-                    canTogglePrimary: !!vesselSpell && !!apparitionKey,
-                    primaryTitle: isPrimary
-                        ? game.i18n.localize(`${MODULE_ID}.ManageApparitions.PrimaryActive`)
-                        : game.i18n.localize(`${MODULE_ID}.ManageApparitions.PrimaryInactive`),
-                    ...grants,
-                };
             }),
         );
-        bonded.sort((a, b) => a.name.localeCompare(b.name));
-
-        const bondedUuids = new Set(bondedFeats.map((item) => getApparitionKey(item)));
-        const available = (this.available ?? [])
-            .filter((entry) => !bondedUuids.has(entry.uuid))
-            .map((entry) => ({
-                ...entry,
-                loresText: entry.lores.join(", "),
-                searchText: `${entry.name} ${entry.lores.join(" ")}`.toLowerCase(),
-            }));
-
-        // Relinquish Control: the apparition the character is tied to, and the ones it can be changed to.
-        const known = new Map([
-            ...(this.available ?? []).map((entry) => [entry.uuid, { name: entry.name, img: entry.img }]),
-            ...bondedFeats.map((feat) => [getApparitionKey(feat), { name: feat.name, img: feat.img }]),
-        ]);
-        const permanentContext = permanent.available
-            ? {
-                  show: true,
-                  hasKey: !!permanent.key,
-                  key: permanent.key,
-                  name: known.get(permanent.key)?.name ?? permanent.name,
-                  img: known.get(permanent.key)?.img,
-                  options: [...known]
-                      .map(([key, info]) => ({ key, name: info.name, selected: key === permanent.key }))
-                      .sort((a, b) => a.name.localeCompare(b.name, game.i18n.lang)),
-              }
-            : { show: false };
-
-        let wandering = { show: false, rows: [] };
+        if (this.closed || this.profilePreview !== state) return;
+        state.info = new Map(rows);
+        state.status = rows.some(([, info]) => !info || info.error) ? "error" : "ready";
+        this.metrics.profile = { ms: performance.now() - started, error: state.status === "error", count: rows.length };
+        this.requestRender();
+    }
+    async bondApparition(uuid) {
+        if (!actorCanModify(this.actor)) return;
         try {
-            wandering = await getWanderingContext(this.actor, {
-                names: new Map((this.available ?? []).map((entry) => [entry.uuid, entry.name])),
-            });
+            const doc = await resolveManagerDocument(uuid);
+            if (!doc?.isOfType?.("feat")) return;
+            await addApparition(this.actor, doc);
+            this.requestRender();
         } catch (error) {
-            console.error(`${MODULE_ID} | Failed to prepare wandering feats`, error);
+            notifyOperationFailed(error);
         }
+    }
+    activateTab(tab, root = this.element) {
+        if (!TAB_NAMES.includes(tab)) return;
+        this.uiState.tab = tab;
+        if (root instanceof HTMLElement) {
+            for (const panel of root.querySelectorAll("[data-manager-panel]")) panel.hidden = panel.dataset.managerPanel !== tab;
+            for (const button of root.querySelectorAll("[data-manager-tab]")) {
+                const active = button.dataset.managerTab === tab;
+                button.setAttribute("aria-selected", String(active));
+                button.tabIndex = active ? 0 : -1;
+            }
+        }
+        if (root instanceof HTMLElement)
+            for (const scroller of root.querySelectorAll("[data-scroll-key]")) {
+                if (!scroller.closest("[hidden]")) scroller.scrollTop = this.uiState.scroll[scroller.dataset.scrollKey] ?? 0;
+            }
+        if (tab === "abilities") void this.ensureWandering();
+        if (tab === "profiles") void this.ensureProfile();
+    }
+    applySearch(root) {
+        const query = this.uiState.search.trim().toLowerCase().replaceAll("ё", "е");
+        let count = 0;
+        for (const row of root.querySelectorAll("[data-searchable]")) {
+            row.hidden = !!query && !row.dataset.searchable.includes(query);
+            if (!row.hidden) count++;
+        }
+        const empty = root.querySelector('[data-role="search-empty"]');
+        if (empty) empty.hidden = !query || count > 0;
+    }
+    _onRender(context, options) {
+        super._onRender?.(context, options);
+        if (this.closed) return;
+        const root = this.element;
+        this.hasRendered = true;
+        if (this.metrics.firstRenderMs === null) this.metrics.firstRenderMs = performance.now() - this.metrics.openedAt;
+        if (root instanceof HTMLElement) {
+            // Restore fields only if the selected option still exists after an actor update.
+            for (const field of root.querySelectorAll("input[name],select[name],textarea[name]")) {
+                const value = this.uiState.fields[field.name];
+                if (value !== undefined && (!(field instanceof HTMLSelectElement) || [...field.options].some((o) => o.value === value)))
+                    field.value = value;
+            }
+            const search = root.querySelector('[data-role="apparition-search"]');
+            if (search) search.value = this.uiState.search;
+            for (const section of root.querySelectorAll("details[data-detail-key],details[data-ui-section]")) {
+                const key = section.dataset.detailKey ?? section.dataset.uiSection;
+                section.open = this.uiState.openKeys.has(key);
+            }
+            const selected = root.querySelector('[name="profileId"]');
+            if (this.pendingProfileId !== undefined && selected?.value === this.pendingProfileId) delete this.pendingProfileId;
+            if (this.resetFocusInput) this.resetFocusInput = false;
+            this.activateTab(this.uiState.tab, root);
+            this.applySearch(root);
+            for (const scroller of root.querySelectorAll("[data-scroll-key]"))
+                scroller.scrollTop = this.uiState.scroll[scroller.dataset.scrollKey] ?? 0;
+            const focused = this.uiState.focus;
+            if (focused) {
+                const field = [...root.querySelectorAll("input,select,textarea,button")].find((el) =>
+                    focused.name
+                        ? el.name === focused.name
+                        : focused.action && el.dataset.action === focused.action && el.dataset.key === focused.key,
+                );
+                if (field && !field.closest("[hidden]")) {
+                    field.focus({ preventScroll: true });
+                    if (typeof focused.start === "number" && field.setSelectionRange)
+                        try {
+                            field.setSelectionRange(focused.start, focused.end);
+                        } catch {
+                            /* e.g. number input */
+                        }
+                }
+            }
+        }
+        if (!this.started) {
+            this.started = true;
+            void this.reloadAvailable();
+        }
+        if (this.uiState.tab === "apparitions") for (const key of this.uiState.openKeys) void this.loadDetails(key);
+    }
 
-        const focusOverride = getFocusPointsOverride(this.actor);
-
-        const profiles = await this.#prepareProfiles(bondedFeats);
-        const lastDay = getLastDayApparitionSnapshot(this.actor);
-
-        return {
+    /** Deliberately local-only. No compendium/UUID await belongs on this path. */
+    async _prepareContext(_options) {
+        const started = performance.now();
+        const feats = getBondedApparitionFeats(this.actor),
+            permanent = getPermanentApparition(this.actor),
+            familiarState = getSpiritFamiliarState(this.actor);
+        const primary = new Set(getPrimaryVesselState(this.actor).primary);
+        const decorate = (summary) => {
+            const state = this.details.get(summary.uuid);
+            return {
+                ...summary,
+                key: summary.uuid,
+                loresText: summary.lores.join(", "),
+                searchText: `${summary.name} ${summary.lores.join(" ")}`.toLowerCase().replaceAll("ё", "е"),
+                expanded: this.uiState.openKeys.has(summary.uuid),
+                detailLoading: !state || state.status === "loading",
+                hasGrants: !!(state?.data?.spells?.length || state?.data?.vessel),
+                detailError: state?.status === "error",
+                detailReady: !!state && state.status !== "loading",
+                ...(state?.data ?? emptyDetails),
+            };
+        };
+        const bonded = feats
+            .map((feat) => {
+                const summary = summarizeApparition(feat),
+                    key = summary.uuid;
+                const suspended = familiarState.available && familiarState.key === key && familiarState.status === "destroyed";
+                const vessel = getVesselSpellForApparition(this.actor, feat);
+                return {
+                    ...decorate(summary),
+                    id: feat.id,
+                    isPermanent: permanent.key === key,
+                    suspended,
+                    stale: !suspended && !apparitionStillGrantsAnything(this.actor, feat),
+                    vesselIsPrimary: primary.has(key),
+                    canTogglePrimary: !suspended && !!vessel,
+                    primaryTitle: game.i18n.localize(
+                        `${MODULE_ID}.ManageApparitions.${primary.has(key) ? "PrimaryActive" : "PrimaryInactive"}`,
+                    ),
+                };
+            })
+            .sort((a, b) => a.name.localeCompare(b.name, game.i18n.lang));
+        const keys = new Set(bonded.map((entry) => entry.key));
+        const available = this.available.filter((entry) => !keys.has(entry.uuid)).map(decorate);
+        const known = new Map([...this.available.map((entry) => [entry.uuid, entry]), ...bonded.map((entry) => [entry.key, entry])]);
+        const profiles = getApparitionProfiles(this.actor).map((profile) => ({
+            ...profile,
+            selected: profile.id === this.uiState.profileId,
+            label: formatLocalized(`${MODULE_ID}.ManageApparitions.ProfileOption`, {
+                name: profile.name,
+                count: profile.apparitions.length,
+            }),
+        }));
+        const selected = profiles.find((profile) => profile.selected);
+        const preview = selected && this.profilePreview?.id === selected.id ? this.profilePreview : null;
+        const previewRows =
+            selected?.apparitions.map((key) => {
+                const info = known.get(key) ?? preview?.info.get(key);
+                return {
+                    key,
+                    name: info?.name ?? key.split(".").pop(),
+                    img: info?.img ?? "systems/pf2e/icons/default-icons/mystery-man.svg",
+                    missing: !!preview && preview.status !== "loading" && preview.info.has(key) && !info,
+                    primary: selected.primary.includes(key),
+                    bonded: keys.has(key),
+                    unresolved: !info || info.error,
+                };
+            }) ?? [];
+        const focusOverride = getFocusPointsOverride(this.actor),
+            attunement = getAttunementSummary(this.actor);
+        const context = {
+            instanceId: `am-${this.actor.id}`,
+            actorName: this.actor.name,
+            castingMode: game.i18n.localize(`${MODULE_ID}.ManagerUI.${attunement.mode === "archetype" ? "Archetype" : "Class"}`),
             bonded,
             available,
             availableLoading: this.availableLoading,
+            catalogError: this.catalogError,
+            attunement,
+            attunementCompact: formatLocalized(`${MODULE_ID}.ManagerUI.AttunementCompact`, {
+                count: attunement.count,
+                expected: attunement.expected,
+            }),
+            focusValue: this.actor.system.resources?.focus?.value ?? 0,
             focusMax: this.actor.system.resources?.focus?.max ?? 0,
-            wandering,
-            permanent: permanentContext,
-            focusOverride,
-            hasFocusOverride: focusOverride !== null,
+            wandering: this.wanderingState?.data ?? { show: true, rows: [], lores: [] },
+            hasAbilitySections: permanent.available || familiarState.available || !this.wanderingState || this.wanderingState.data?.show,
+            wanderingLoading: !this.wanderingState || this.wanderingState.status === "loading",
+            wanderingError: this.wanderingState?.status === "error",
+            permanent: {
+                show: permanent.available,
+                hasKey: !!permanent.key,
+                key: permanent.key,
+                name: known.get(permanent.key)?.name ?? permanent.name,
+                img: known.get(permanent.key)?.img,
+                options: [...known]
+                    .map(([key, info]) => ({ key, name: info.name, selected: key === permanent.key }))
+                    .sort((a, b) => a.name.localeCompare(b.name)),
+            },
+            familiar: {
+                ...familiarState,
+                destroyed: familiarState.status === "destroyed",
+                options: bonded.map((entry) => ({ key: entry.key, name: entry.name, selected: entry.key === familiarState.key })),
+                actors: [...game.actors]
+                    .filter((actor) => actor.isOfType?.("familiar") && (actor.isOwner || game.user.isGM))
+                    .map((actor) => ({
+                        uuid: actor.uuid,
+                        name: actor.name,
+                        selected: actor.uuid === (familiarState.actorUuid ?? this.actor.familiar?.uuid),
+                    })),
+            },
             profiles,
             hasProfiles: profiles.length > 0,
-            hasLastDaySnapshot: !!lastDay?.apparitions.length,
+            selectedProfile: !!selected,
+            profileLoading: !!selected && (!preview || preview.status === "loading"),
+            profileError: preview?.status === "error",
+            previewRows,
+            toUnbind: selected ? bonded.filter((entry) => !selected.apparitions.includes(entry.key)).map((entry) => entry.name) : [],
+            hasLastDaySnapshot: !!getLastDayApparitionSnapshot(this.actor)?.apparitions.length,
+            focusOverride,
+            hasFocusOverride: focusOverride !== null,
             autoPrimary: isAutoPrimaryEnabled(),
             isGM: !!game.user.isGM,
+            tabApparitions: this.uiState.tab === "apparitions",
+            tabAbilities: this.uiState.tab === "abilities",
+            tabProfiles: this.uiState.tab === "profiles",
         };
+        this.metrics.contextMs = performance.now() - started;
+        return context;
     }
 
     _attachPartListeners(partId, html, _options) {
         if (partId !== "manage") return;
+        for (const button of html.querySelectorAll("[data-manager-tab]")) {
+            button.addEventListener("click", () => {
+                this.captureUI(html);
+                this.activateTab(button.dataset.managerTab, html);
+            });
+            button.addEventListener("keydown", (event) => {
+                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                event.preventDefault();
+                const index = TAB_NAMES.indexOf(this.uiState.tab);
+                const next =
+                    event.key === "Home"
+                        ? 0
+                        : event.key === "End"
+                          ? TAB_NAMES.length - 1
+                          : (index + (event.key === "ArrowRight" ? 1 : -1) + TAB_NAMES.length) % TAB_NAMES.length;
+                this.captureUI(html);
+                this.activateTab(TAB_NAMES[next], html);
+                html.querySelector(`[data-manager-tab="${TAB_NAMES[next]}"]`)?.focus();
+            });
+        }
+        for (const details of html.querySelectorAll("details[data-detail-key]")) {
+            details.addEventListener("toggle", () => {
+                if (details.open) {
+                    this.uiState.openKeys.add(details.dataset.detailKey);
+                    void this.loadDetails(details.dataset.detailKey);
+                } else this.uiState.openKeys.delete(details.dataset.detailKey);
+            });
+        }
+        addListenerAll(html, "[data-action='retry-catalog']", () => {
+            void this.reloadAvailable({ force: true });
+            this.requestRender();
+        });
+        addListenerAll(html, "[data-action='retry-details']", (button) => void this.loadDetails(button.dataset.key, { force: true }));
+        addListenerAll(html, "[data-action='retry-wandering']", () => void this.ensureWandering({ force: true }));
+        addListenerAll(html, "[data-action='retry-profile']", () => void this.ensureProfile({ force: true }));
+        addListenerAll(html, "[data-action='clear-search']", () => {
+            this.uiState.search = "";
+            const search = html.querySelector('[data-role="apparition-search"]');
+            if (search) search.value = "";
+            this.applySearch(html);
+        });
 
         addListenerAll(html, "[data-action='copy-custom']", async (el) => {
             if (!game.user.isGM) return;
@@ -527,14 +689,8 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
             try {
                 const item = this.actor.items.get(el.dataset.id);
                 if (!item) return;
-                // Relinquish Control: the permanent apparition is attuned every day, so it is changed, not unbound.
-                const permanentKey = getPermanentApparition(this.actor).key;
-                if (permanentKey && getApparitionKey(item) === permanentKey) {
-                    ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.Notify.PermanentLocked`));
-                    return;
-                }
                 await removeApparition(this.actor, item);
-                this.render();
+                this.requestRender();
             } catch (error) {
                 notifyOperationFailed(error);
             }
@@ -542,11 +698,35 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
 
         addListenerAll(html, "[data-action='bond']", (el) => this.bondApparition(el.dataset.uuid));
 
+        addListenerAll(html, "[data-action='set-spirit-familiar']", async () => {
+            try {
+                const key = html.querySelector('[name="familiarApparition"]')?.value;
+                const uuid = html.querySelector('[name="spiritFamiliarActor"]')?.value || null;
+                if (key && (await setSpiritFamiliar(this.actor, key, uuid))) this.requestRender();
+            } catch (error) {
+                notifyOperationFailed(error);
+            }
+        });
+        addListenerAll(html, "[data-action='destroy-spirit-familiar']", async () => {
+            try {
+                if (await markSpiritFamiliarDestroyed(this.actor)) this.requestRender();
+            } catch (error) {
+                notifyOperationFailed(error);
+            }
+        });
+        addListenerAll(html, "[data-action='remanifest-spirit-familiar']", async () => {
+            try {
+                if (await remanifestSpiritFamiliar(this.actor)) this.requestRender();
+            } catch (error) {
+                notifyOperationFailed(error);
+            }
+        });
+
         addListenerAll(html, "[data-action='set-permanent']", async () => {
             const key = html.querySelector('[name="permanentApparition"]')?.value;
             if (!key || !actorCanModify(this.actor)) return;
             try {
-                if (await setPermanentApparition(this.actor, key)) this.render();
+                if (await setPermanentApparition(this.actor, key)) this.requestRender();
             } catch (error) {
                 notifyOperationFailed(error);
             }
@@ -598,7 +778,7 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
                     if (!choice) return;
                     await setPrimaryVessel(this.actor, choice.newKey, true, { replaceKey: choice.replaceKey });
                 }
-                this.render();
+                this.requestRender();
             } catch (error) {
                 notifyOperationFailed(error);
             }
@@ -625,7 +805,7 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
         addListenerAll(html, "[data-action='replace-wandering']", async (el) => {
             if (!actorCanModify(this.actor)) return;
             const select = html.querySelector(`[name="wandering-${el.dataset.featId}"]`);
-            if (await replaceWanderingFeat(this.actor, el.dataset.featId, select?.value)) this.render();
+            if (await replaceWanderingFeat(this.actor, el.dataset.featId, select?.value)) this.requestRender();
         });
 
         addListenerAll(html, "[data-action='cleanup-vessels']", async () => {
@@ -634,24 +814,22 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
                 const removed = await pruneLeftoverApparitions(this.actor);
                 const messageKey = removed ? `${MODULE_ID}.Notify.VesselsCleanedUp` : `${MODULE_ID}.Notify.NoVesselsToCleanUp`;
                 ui.notifications.info(formatLocalized(messageKey, { count: removed }));
-                this.render();
+                this.requestRender();
             } catch (error) {
                 notifyOperationFailed(error);
             }
         });
 
         const profileSelect = html.querySelector("[name='profileId']");
-        const showProfilePreview = () => {
-            for (const list of html.querySelectorAll("[data-profile-preview]"))
-                list.hidden = list.dataset.profilePreview !== profileSelect?.value;
-        };
         profileSelect?.addEventListener("change", (event) => {
+            this.uiState.profileId = event.target.value;
             const profile = getApparitionProfiles(this.actor).find((entry) => entry.id === event.target.value);
             const input = html.querySelector('[name="profileName"]');
             if (profile && input) input.value = profile.name;
-            showProfilePreview();
+            this.captureUI(html);
+            void this.ensureProfile();
+            this.requestRender();
         });
-        showProfilePreview();
 
         addListenerAll(html, "[data-action='save-profile']", async () => {
             if (!actorCanModify(this.actor)) return;
@@ -663,9 +841,14 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
                     return;
                 }
                 const selectedId = html.querySelector('[name="profileId"]')?.value || null;
-                await saveApparitionProfile(this.actor, name, { id: selectedId });
+                const saved = await saveApparitionProfile(this.actor, name, { id: selectedId });
+                this.uiState.profileId = saved.id;
+                this.uiState.fields.profileId = saved.id;
+                if (html.querySelector('[name="profileId"]')) html.querySelector('[name="profileId"]').value = selectedId ?? "";
+                // The new option does not exist until render; captureUI must not restore the old selection.
+                this.pendingProfileId = saved.id;
                 ui.notifications.info(formatLocalized(`${MODULE_ID}.Notify.ProfileSaved`, { name }));
-                this.render();
+                this.requestRender();
             } catch (error) {
                 notifyOperationFailed(error);
             }
@@ -678,7 +861,7 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
                 if (!id) return;
                 const result = await applyApparitionProfile(this.actor, id);
                 ui.notifications.info(formatLocalized(`${MODULE_ID}.Notify.ProfileApplied`, result));
-                this.render();
+                this.requestRender();
             } catch (error) {
                 notifyOperationFailed(error);
             }
@@ -690,7 +873,9 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
                 const id = html.querySelector('[name="profileId"]')?.value;
                 if (!id) return;
                 await deleteApparitionProfile(this.actor, id);
-                this.render();
+                this.pendingProfileId = "";
+                this.profilePreview = null;
+                this.requestRender();
             } catch (error) {
                 notifyOperationFailed(error);
             }
@@ -701,7 +886,7 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
             try {
                 const result = await restoreLastDayApparitions(this.actor);
                 ui.notifications.info(formatLocalized(`${MODULE_ID}.Notify.LastDayRestored`, result));
-                this.render();
+                this.requestRender();
             } catch (error) {
                 notifyOperationFailed(error);
             }
@@ -714,7 +899,7 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
             }
             try {
                 await setAutoPrimaryEnabled(!isAutoPrimaryEnabled());
-                this.render();
+                this.requestRender();
             } catch (error) {
                 notifyOperationFailed(error);
             }
@@ -736,7 +921,7 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
                 const value = Number(input?.value);
                 if (!Number.isFinite(value)) return;
                 await setFocusPointsOverride(this.actor, value);
-                this.render();
+                this.requestRender();
             } catch (error) {
                 notifyOperationFailed(error);
             }
@@ -746,7 +931,8 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
             if (!actorCanModify(this.actor)) return;
             try {
                 await setFocusPointsOverride(this.actor, null);
-                this.render();
+                this.resetFocusInput = true;
+                this.requestRender();
             } catch (error) {
                 notifyOperationFailed(error);
             }
@@ -756,10 +942,8 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
 
         const search = html.querySelector('[data-role="apparition-search"]');
         search?.addEventListener("input", () => {
-            const query = search.value.trim().toLowerCase();
-            for (const row of html.querySelectorAll("[data-searchable]")) {
-                row.hidden = query.length > 0 && !row.dataset.searchable.includes(query);
-            }
+            this.uiState.search = search.value;
+            this.applySearch(html);
         });
     }
 }
@@ -810,20 +994,35 @@ Hooks.on("renderCharacterSheetPF2e", (app, html) => {
 
 const BUILTIN_MACRO_FLAG = "manage-apparitions";
 
-// The list of bondable apparitions is cached; any change to a custom apparition
-// (or its Vessel) - made here, by an import, or by another GM - refreshes it
-// and every open management window.
-for (const hook of ["createItem", "updateItem", "deleteItem"]) {
-    Hooks.on(hook, (item) => {
-        if (item.parent) return; // world items only
-        const flag = item.type === "spell" ? "customApparitionVessel" : item.type === "feat" ? "customApparition" : null;
-        if (!flag || !item.getFlag(MODULE_ID, flag)) return;
-        availableApparitionsPromise = null;
-        for (const app of foundry.applications.instances.values()) {
-            if (app instanceof ManageApparitionsApp) app.reloadAvailable();
+// Refresh client caches on relevant source changes, never by writing actor data.
+function refreshManagerSources() {
+    invalidateManagerData();
+    resetWanderingCache();
+    for (const app of foundry.applications.instances.values())
+        if (app instanceof ManageApparitionsApp) {
+            app.details.clear();
+            app.profilePreview = null;
+            app.wanderingState = null;
+            void app.reloadAvailable();
+            app.requestRender();
         }
-    });
 }
+for (const hook of ["createItem", "updateItem", "deleteItem"])
+    Hooks.on(hook, (item) => {
+        if (item.parent) {
+            for (const app of foundry.applications.instances.values())
+                if (app instanceof ManageApparitionsApp && app.actor === item.parent) app.requestRender();
+            return;
+        }
+        // World spell/feat metadata can be referenced by custom apparitions even without module flags.
+        const relevant = item.type === "feat" || item.type === "spell";
+        if (relevant) refreshManagerSources();
+    });
+Hooks.on("updateCompendium", refreshManagerSources);
+Hooks.on("updateActor", (actor) => {
+    for (const app of foundry.applications.instances.values())
+        if (app instanceof ManageApparitionsApp && app.actor === actor) app.requestRender();
+});
 
 /**
  * Creates a ready-to-use "Bond/Unbond Apparition" world macro once (a GM
@@ -912,10 +1111,14 @@ Hooks.once("ready", () => {
 
     const module = game.modules.get(MODULE_ID);
     if (module) {
-        module.api = { ...module.api, openManageApparitions };
+        module.api = { ...module.api, openManageApparitions, getManagerPerformance };
     }
 
     void ensureBuiltinMacro().catch((error) => console.error(`${MODULE_ID} | Failed to ensure built-in macro`, error));
 });
 
-export { loadAvailableApparitions };
+function getManagerPerformance(actor) {
+    const app = foundry.applications.instances.get(`apparition-fix-manage-apparitions-${actor?.id}`);
+    return app instanceof ManageApparitionsApp ? app.reportPerformance() : (managerReports.get(actor) ?? null);
+}
+export { loadAvailableApparitions, ManageApparitionsApp, getManagerPerformance };

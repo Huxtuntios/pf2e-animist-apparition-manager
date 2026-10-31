@@ -112,6 +112,7 @@ Hooks.once("ready", async () => {
     }
 
     try {
+        await migrateAnimistRules();
         await clearLegacyLoreSkillRegistry();
         await migrateApparitionLoresToRuleElements();
     } catch (error) {
@@ -155,8 +156,31 @@ Hooks.once("ready", async () => {
         syncDailiesIsolation,
         getPermanentApparition,
         setPermanentApparition,
+        getAnimistCastingMode,
+        getAttunementSummary,
+        getSpiritFamiliarState,
+        setSpiritFamiliar,
+        markSpiritFamiliarDestroyed,
+        remanifestSpiritFamiliar,
+        migrateAnimistRules,
     };
 });
+
+// Serialize bond/unbond operations on this client, including repeated button clicks.
+// This is not a distributed lock: two clients should not edit the same actor at once.
+const apparitionOperations = new WeakMap();
+
+function queueApparitionOperation(actor, operation) {
+    if (!actor || typeof actor !== "object") return operation();
+    const previous = apparitionOperations.get(actor) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(operation);
+    apparitionOperations.set(actor, next);
+    const cleanup = () => {
+        if (apparitionOperations.get(actor) === next) apparitionOperations.delete(actor);
+    };
+    void next.then(cleanup, cleanup);
+    return next;
+}
 
 function isEnabled() {
     return game.settings.get(MODULE_ID, "enabled");
@@ -280,8 +304,8 @@ async function diagnose(actor) {
         const pack = game.packs.get(packId);
         if (!pack) continue;
         try {
-            // Request the parent only: overlapping parent/child fields collide in the v14 server projection.
-            const index = await pack.getIndex({ fields: ["system.traits"] });
+            // Use leaf fields only: PF2e or another module may already index traits.value.
+            const index = await pack.getIndex({ fields: ["system.traits.otherTags"] });
             const apparitions = index.filter(
                 (entry) => entry.type === "feat" && entry.system?.traits?.otherTags?.includes("animist-apparition"),
             );
@@ -382,7 +406,7 @@ async function diagnose(actor) {
 }
 
 /* -------------------------------------------- */
-/*  Apparition spells are never Signature       */
+/*  Managed spell identifiers / signature data  */
 /* -------------------------------------------- */
 
 /**
@@ -391,7 +415,7 @@ async function diagnose(actor) {
  */
 function hasApparitionIdentifier(flagsSource) {
     const identifier = foundry.utils.getProperty(flagsSource ?? {}, `${MODULE_ID}.identifier`);
-    return identifier === getApparitionIdentifier();
+    return identifier === getApparitionIdentifier() || identifier === `${getApparitionIdentifier()}-restricted`;
 }
 
 /**
@@ -403,29 +427,23 @@ function hasVesselIdentifier(flagsSource) {
     return identifier === getVesselIdentifier();
 }
 
-const SIGNATURE_PATH = "system.location.signature";
-
+// Signature is real PF2e data, not a presentation switch. Only class spontaneous
+// entries have signature spells; prepared archetype entries use native preparation.
+function isManagedSignatureSpell(item, data = item) {
+    if (!hasApparitionIdentifier(data.flags) || item.isCantrip || data.system?.traits?.value?.includes("cantrip")) return false;
+    const actor = item.parent;
+    const location = data.system?.location?.value ?? item.system?.location?.value;
+    const entry = actor?.items?.get(location);
+    return entry?.system?.prepared?.value === "spontaneous";
+}
 Hooks.on("preCreateItem", (item, data) => {
-    if (!isEnabled() || game.system.id !== "pf2e") return;
-    if (data.type !== "spell") return;
-    if (!hasApparitionIdentifier(data.flags)) return;
-
-    if (foundry.utils.getProperty(data, SIGNATURE_PATH)) {
-        item.updateSource({ [SIGNATURE_PATH]: false });
-    }
+    if (!isEnabled() || game.system.id !== "pf2e" || data.type !== "spell") return;
+    if (isManagedSignatureSpell(item, data)) item.updateSource({ "system.location.signature": true });
 });
-
-// Keep these spells non-Signature even if an external edit or migration tries to set it.
 Hooks.on("preUpdateItem", (item, changes) => {
-    if (!isEnabled() || game.system.id !== "pf2e") return;
-    if (item.type !== "spell") return;
-    if (!hasApparitionIdentifier(item.flags)) return;
-
-    if (SIGNATURE_PATH in changes) {
-        if (changes[SIGNATURE_PATH] === true) changes[SIGNATURE_PATH] = false;
-    } else if (foundry.utils.getProperty(changes, SIGNATURE_PATH) === true) {
-        foundry.utils.setProperty(changes, SIGNATURE_PATH, false);
-    }
+    if (!isEnabled() || game.system.id !== "pf2e" || item.type !== "spell" || !isManagedSignatureSpell(item)) return;
+    if ("system.location.signature" in changes) changes["system.location.signature"] = true;
+    else if (changes.system?.location && "signature" in changes.system.location) changes.system.location.signature = true;
 });
 
 /* -------------------------------------------- */
@@ -438,7 +456,7 @@ Hooks.on("preUpdateItem", (item, changes) => {
  */
 function getApparitionEntry(actor) {
     if (!actor?.spellcasting) return null;
-    return actor.spellcasting.find((entry) => hasApparitionIdentifier(entry.flags)) ?? null;
+    return actor.spellcasting.find((entry) => entry.flags?.[MODULE_ID]?.identifier === getApparitionIdentifier()) ?? null;
 }
 
 /**
@@ -513,6 +531,28 @@ function actorHasApparitionAccess(actor) {
     return !!(findFeature(actor, APPARITION_ATTUNEMENT) ?? findFeature(actor, ANIMIST_DEDICATION));
 }
 
+function getAnimistCastingMode(actor) {
+    if (findFeature(actor, APPARITION_ATTUNEMENT) || isAnimistClass(actor)) return "class";
+    return findFeature(actor, ANIMIST_DEDICATION) ? "archetype" : null;
+}
+
+/** Informational only: never gates addApparition or deletes excess choices. */
+function getAttunementSummary(actor) {
+    const mode = getAnimistCastingMode(actor);
+    const expected = mode === "archetype" ? 1 : (actor.level ?? 1) >= 15 ? 4 : (actor.level ?? 1) >= 7 ? 3 : 2;
+    return {
+        count: getBondedApparitionFeats(actor).length,
+        expected,
+        mode,
+        text: formatLocalized(`${MODULE_ID}.Rules.AttunementCount`, { count: getBondedApparitionFeats(actor).length, expected }),
+        hint: game.i18n.localize(`${MODULE_ID}.Rules.${mode === "archetype" ? "ArchetypeHint" : "ClassHint"}`),
+    };
+}
+
+function getActiveApparitionFeats(actor, options) {
+    return getBondedApparitionFeats(actor, options).filter((feat) => !isApparitionBenefitSuspended(actor, getApparitionKey(feat)));
+}
+
 /**
  * The spell a sheet control (Cast button, signature star) belongs to, but
  * only when that spell is on the given entry. The system's own `cast-spell`
@@ -545,7 +585,7 @@ Hooks.on("renderCharacterSheetPF2e", (app, html) => {
     if (!root) return;
 
     const entry = getApparitionEntry(actor);
-    if (entry) {
+    if (entry?.system?.prepared?.value === "spontaneous") {
         for (const castButton of root.querySelectorAll('[data-action="cast-spell"], button.cast-spell')) {
             if (!(castButton instanceof HTMLElement)) continue;
 
@@ -570,7 +610,12 @@ Hooks.on("renderCharacterSheetPF2e", (app, html) => {
             });
         }
 
-        // The "toggle signature spell" star would bring the per-rank rows back.
+        // Hide PF2e's generated duplicate rows only in this entry's DOM.
+        // The persisted spells remain genuine signature spells.
+        for (const row of root.querySelectorAll(".spell.virtual[data-entry-id]")) {
+            if (row.dataset.entryId === entry.id) row.dataset.apparitionFixVirtual = "true";
+        }
+        // Signature is mandatory for this repertoire; no toggle is needed.
         for (const star of root.querySelectorAll('[data-action="toggle-signature-spell"]')) {
             if (!(star instanceof HTMLElement)) continue;
             const spell = getEntrySpellForControl(actor, entry, star);
@@ -591,14 +636,37 @@ Hooks.on("renderCharacterSheetPF2e", (app, html) => {
  * (`.spell`, `.name`, `.item-controls`, `button.cast-spell`) come from the PF2e
  * character sheet template, which is not part of `pf2e.mjs`.
  */
+const vesselControlState = new WeakMap();
+
 function decorateVesselEntry(actor, vesselEntry, root) {
     const state = getPrimaryVesselState(actor);
-    const everythingPrimary = state.vesselKeys.length <= state.limit;
-    const inactive = new Map(
-        everythingPrimary
-            ? []
-            : state.vesselKeys.filter((entry) => !state.primary.includes(entry.key)).map((entry) => [entry.spellId, entry.key]),
-    );
+    // A shared Vessel is usable if ANY apparition granting it is primary.
+    const activeIds = new Set(state.vesselKeys.filter((entry) => state.primary.includes(entry.key)).map((entry) => entry.spellId));
+    const inactive = new Map(state.vesselKeys.filter((entry) => !activeIds.has(entry.spellId)).map((entry) => [entry.spellId, entry.key]));
+
+    // Some sheets reuse DOM nodes: undo only our own changes before decorating again.
+    for (const castButton of root.querySelectorAll('[data-apparition-fix-inactive="true"]')) {
+        const previous = vesselControlState.get(castButton);
+        if (!previous) continue;
+        castButton.removeEventListener("click", previous.block, true);
+        if (castButton instanceof HTMLButtonElement) castButton.disabled = previous.disabled;
+        for (const [name, value] of [
+            ["title", previous.title],
+            ["aria-disabled", previous.ariaDisabled],
+        ]) {
+            if (value === null) castButton.removeAttribute(name);
+            else castButton.setAttribute(name, value);
+        }
+        if (!previous.inactiveClass) castButton.classList.remove("inactive");
+        castButton.classList.remove("apparition-fix-inactive");
+        delete castButton.dataset.apparitionFixInactive;
+        vesselControlState.delete(castButton);
+    }
+    for (const element of root.querySelectorAll(".apparition-fix-inactive-vessel, .apparition-fix-inactive-name")) {
+        element.classList.remove("apparition-fix-inactive-vessel", "apparition-fix-inactive-name");
+    }
+    for (const button of root.querySelectorAll('[data-apparition-fix="swap-primary"], [data-apparition-fix="change-primary"]'))
+        button.remove();
     if (!inactive.size) return;
 
     const block = (event) => {
@@ -615,6 +683,13 @@ function decorateVesselEntry(actor, vesselEntry, root) {
         if (!apparitionKey) continue;
 
         const spellEl = castButton.closest("[data-item-id]");
+        vesselControlState.set(castButton, {
+            block,
+            disabled: castButton instanceof HTMLButtonElement ? castButton.disabled : false,
+            title: castButton.getAttribute("title"),
+            ariaDisabled: castButton.getAttribute("aria-disabled"),
+            inactiveClass: castButton.classList.contains("inactive"),
+        });
         castButton.dataset.apparitionFixInactive = "true";
         castButton.classList.add("inactive", "apparition-fix-inactive");
         castButton.setAttribute("aria-disabled", "true");
@@ -861,7 +936,7 @@ const SPELL_LINK_REGEX = /@(uuid|compendium)\[([a-z0-9._-]+)\]/gi;
 // Same conversion used by PF2e's inline UUID syntax handler: a legacy
 // `@Compendium[pack.id]` link lacks the "Compendium." prefix of a real UUID.
 function inlineMatchToUuid(match) {
-    return match[1] === "Compendium" ? `Compendium.${match[2]}` : match[2];
+    return match[1].toLowerCase() === "compendium" ? `Compendium.${match[2]}` : match[2];
 }
 
 /**
@@ -1166,7 +1241,7 @@ function getLoreSkillIdentity(name) {
  * registered skills outlive their apparition and cannot be removed.
  */
 async function clearLegacyLoreSkillRegistry() {
-    if (!game.user?.isGM) return;
+    if (!isEnabled() || !game.user?.isGM) return;
     try {
         const stored = game.settings.get(MODULE_ID, LORE_SKILLS_SETTING) ?? {};
         if (stored && typeof stored === "object" && Object.keys(stored).length) {
@@ -1292,7 +1367,7 @@ async function syncApparitionLoreRuleElements(actor, feat) {
     });
 
     const desired = new Map();
-    for (const name of loreNames) {
+    for (const name of isApparitionBenefitSuspended(actor, getApparitionKey(feat)) ? [] : loreNames) {
         const details = getLoreRuleDetails(name, actor);
         if (details && !desired.has(details.path)) desired.set(details.path, details.rule);
     }
@@ -1379,7 +1454,9 @@ async function pruneLeftoverApparitions(actor) {
         // never be treated as leftovers. A temporary feat that has become
         // completely empty is safe to remove, as is any apparition feat that
         // lacks the temporary marker.
-        (feat) => !isTemporary(feat) || !apparitionStillGrantsAnything(actor, feat),
+        (feat) =>
+            !isApparitionBenefitSuspended(actor, getApparitionKey(feat)) &&
+            (!isTemporary(feat) || !apparitionStillGrantsAnything(actor, feat)),
     );
     for (const feat of leftoverFeats) {
         const result = await removeApparition(actor, feat, { silent: true });
@@ -1484,7 +1561,7 @@ function getPrimaryVesselLimit(actor, vesselCount) {
 
 function getPrimaryVesselState(actor) {
     const vesselIds = getVesselSpells(actor).map((spell) => spell.id);
-    const vesselKeys = getBondedApparitionFeats(actor)
+    const vesselKeys = getActiveApparitionFeats(actor)
         .map((feat) => ({ key: getApparitionKey(feat), spell: getVesselSpellForApparition(actor, feat) }))
         .filter((entry) => entry.key && entry.spell)
         .map((entry) => ({ key: entry.key, spellId: entry.spell.id }));
@@ -1613,7 +1690,7 @@ function wrapAvatarsCreateChatMessageHandler(original) {
 
     const wrapped = async function (chatMessage, info, userId) {
         // Follow pf2e-avatars' own guard conditions before choosing a branch.
-        if (userId !== game.user.id) return original.call(this, chatMessage, info, userId);
+        if (!isEnabled() || userId !== game.user.id) return original.call(this, chatMessage, info, userId);
         const itemUuid = chatMessage?.item?._stats?.compendiumSource;
         if (itemUuid !== AVATAR_SPELL_SOURCE_UUID) return original.call(this, chatMessage, info, userId);
 
@@ -1911,7 +1988,8 @@ async function syncPrimaryFocusRule(actor) {
         const attuned = Math.min(3, getBondedApparitionFeats(actor).length);
         if (attuned > 0) desired.push({ mode: "upgrade", value: attuned });
     } else {
-        const subtracted = Math.max(0, state.vesselKeys.length - state.primary.length);
+        const activeIds = new Set(state.vesselKeys.filter((entry) => state.primary.includes(entry.key)).map((entry) => entry.spellId));
+        const subtracted = state.vesselIds.filter((id) => !activeIds.has(id)).length;
         if (subtracted > 0) desired.push({ mode: "subtract", value: subtracted, priority: 9 });
     }
 
@@ -2010,7 +2088,7 @@ Hooks.on("pf2e.restForTheNight", (actor) => {
             // The spells class features give (Heal & Harm, Avatar, the forms) are part of the next day's list too.
             await syncFeatureSpells(actor);
             // Relinquish Control: the permanent apparition is attuned again for the new day.
-            await ensurePermanentApparition(actor);
+            await ensurePermanentApparition(actor, { autoPrimary: false });
             Hooks.callAll(`${MODULE_ID}:rest-cleanup`, actor, temporary.length);
         } catch (error) {
             notifyOperationFailed(error);
@@ -2062,7 +2140,7 @@ async function ensurePermanentApparition(actor, { autoPrimary } = {}) {
  * @param {string} key The uuid of the apparition.
  * @returns {Promise<boolean>}
  */
-async function setPermanentApparition(actor, key) {
+async function setPermanentApparition(actor, key, { correction = false } = {}) {
     if (!requireActorOwner(actor) || !getPermanentApparition(actor).available) return false;
 
     const source = await fromUuid(key).catch(() => null);
@@ -2070,8 +2148,18 @@ async function setPermanentApparition(actor, key) {
         ui.notifications.warn(formatLocalized(`${MODULE_ID}.Notify.PermanentMissing`, { name: key }));
         return false;
     }
-    await actor.setFlag(MODULE_ID, PERMANENT_APPARITION_FLAG, { key: getApparitionKey(source) ?? key, name: source.name });
-    await ensurePermanentApparition(actor);
+    const previous = getPermanentApparition(actor).key;
+    const next = getApparitionKey(source) ?? key;
+    if (previous && previous !== next && !correction) {
+        const confirmed = await foundry.applications.api.DialogV2.confirm({
+            window: { title: game.i18n.localize(`${MODULE_ID}.Rules.PermanentChangeTitle`) },
+            content: `<p>${foundry.utils.escapeHTML(game.i18n.localize(`${MODULE_ID}.Rules.PermanentChangeHint`))}</p>`,
+        });
+        if (!confirmed) return false;
+    }
+    await actor.setFlag(MODULE_ID, PERMANENT_APPARITION_FLAG, { key: next, name: source.name });
+    // Explicit selection is not an automatic primary switch.
+    await ensurePermanentApparition(actor, { autoPrimary: false });
     ui.notifications.info(formatLocalized(`${MODULE_ID}.Notify.PermanentSet`, { name: source.name }));
     return true;
 }
@@ -2130,13 +2218,12 @@ async function applyApparitionProfile(actor, profileId) {
     const profile = getApparitionProfiles(actor).find((entry) => entry.id === profileId);
     if (!profile) return { added: 0, removed: 0, missing: 0 };
     const target = new Set(profile.apparitions);
-    const permanentKey = getPermanentApparition(actor).key; // never unbound by a profile
     let added = 0,
         removed = 0,
         missing = 0;
     for (const feat of getBondedApparitionFeats(actor)) {
         const key = getApparitionKey(feat);
-        if (key && key !== permanentKey && !target.has(key)) {
+        if (key && !target.has(key)) {
             const result = await removeApparition(actor, feat, { silent: true });
             if (result.removedFeatId || result.removed.length || result.updated.length) removed++;
         }
@@ -2148,7 +2235,7 @@ async function applyApparitionProfile(actor, profileId) {
     );
     for (const key of target) {
         if (current.has(key)) continue;
-        const source = await fromUuid(key);
+        const source = await fromUuid(key).catch(() => null);
         if (!source?.isOfType?.("feat")) {
             missing++;
             continue;
@@ -2156,7 +2243,7 @@ async function applyApparitionProfile(actor, profileId) {
         const result = await addApparition(actor, source, { silent: true, autoPrimary: false });
         if (result.apparitionFeatId) added++;
     }
-    await ensurePermanentApparition(actor, { autoPrimary: false });
+    // A profile is not a new daily preparation: do not resurrect the permanent apparition.
     const state = getPrimaryVesselState(actor);
     const validPrimary = profile.primary.filter((key) => state.vesselKeys.some((entry) => entry.key === key));
     await syncPrimaryVessels(actor, { primary: validPrimary });
@@ -2194,7 +2281,7 @@ async function restoreLastDayApparitions(actor) {
         missing = 0;
     for (const key of snapshot.apparitions) {
         if (getBondedApparitionFeats(actor).some((feat) => getApparitionKey(feat) === key)) continue;
-        const item = await fromUuid(key);
+        const item = await fromUuid(key).catch(() => null);
         if (!item?.isOfType?.("feat")) {
             missing++;
             continue;
@@ -2202,7 +2289,7 @@ async function restoreLastDayApparitions(actor) {
         const result = await addApparition(actor, item, { silent: true, autoPrimary: false });
         if (result.apparitionFeatId) restored++;
     }
-    await ensurePermanentApparition(actor, { autoPrimary: false });
+    // A profile is not a new daily preparation: do not resurrect the permanent apparition.
     const state = getPrimaryVesselState(actor);
     const validPrimary = snapshot.primary.filter((key) => state.vesselKeys.some((entry) => entry.key === key));
     await syncPrimaryVessels(actor, { primary: validPrimary });
@@ -2236,7 +2323,7 @@ async function repairApparitionActor(actor) {
             if (typeof originKey === "string" && originKey && !isFeatureClaim(originKey)) keys.add(originKey);
         }
         for (const key of keys) {
-            const source = await fromUuid(key);
+            const source = await fromUuid(key).catch(() => null);
             if (!source?.isOfType?.("feat")) {
                 missing++;
                 warnings.push(key);
@@ -2263,7 +2350,7 @@ async function repairApparitionActor(actor) {
         }
         removed += await pruneLeftoverApparitions(actor);
         await syncFeatureSpells(actor);
-        await ensurePermanentApparition(actor);
+        // Repair must not re-attune a deliberately removed/dispersed apparition.
         await syncBondedApparitionsFlag(actor);
         await ensureAutoPrimary(actor);
         await syncCurrentPrimaryState(actor);
@@ -2328,7 +2415,7 @@ function parseApparitionSpellUuids(apparitionItem) {
         uuids.push(inlineMatchToUuid(match));
     }
 
-    return uuids;
+    return [...new Set(uuids)];
 }
 
 /**
@@ -2447,7 +2534,11 @@ async function syncBondedApparitionsFlag(actor) {
  * @param {{ silent?: boolean }} [options] `silent` suppresses the result notification (bulk cleanup).
  * @returns {Promise<{ removed: string[], updated: string[], removedFeatId?: string }>}
  */
-async function removeApparition(actor, apparition, { silent = false } = {}) {
+async function removeApparition(actor, apparition, options = {}) {
+    return queueApparitionOperation(actor, () => removeApparitionNow(actor, apparition, options));
+}
+
+async function removeApparitionNow(actor, apparition, { silent = false, preserveFamiliar = false } = {}) {
     const result = { removed: [], updated: [] };
     if (!isEnabled() || game.system.id !== "pf2e") {
         ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.Notify.ModuleDisabled`));
@@ -2463,6 +2554,10 @@ async function removeApparition(actor, apparition, { silent = false } = {}) {
             return result;
         }
 
+        const familiarState = getSpiritFamiliarState(actor);
+        if (!preserveFamiliar && familiarState.key === key && familiarState.status !== "destroyed") {
+            await actor.setFlag(MODULE_ID, "spiritFamiliar", { ...familiarState, status: "destroyed" });
+        }
         // Either entry may be missing (e.g. after a rest deleted it) - the
         // feat, Lore skills and any leftovers are still removed below.
         const spellsEntry = getApparitionEntry(actor);
@@ -2481,7 +2576,7 @@ async function removeApparition(actor, apparition, { silent = false } = {}) {
         // being wrongly deleted - apparitions frequently grant overlapping
         // Lore skills (e.g. two different apparitions both granting
         // "Fortune-Telling Lore").
-        const otherApparitions = getBondedApparitionFeats(actor, { exclude: key }).map((item) => ({
+        const otherApparitions = getActiveApparitionFeats(actor, { exclude: key }).map((item) => ({
             key: getApparitionKey(item),
             spellUuids: new Set(parseApparitionSpellUuids(item)),
             vesselUuid: parseApparitionVesselUuid(item),
@@ -2546,7 +2641,8 @@ async function removeApparition(actor, apparition, { silent = false } = {}) {
             }
         };
 
-        collectRemovals(spellsEntry, hasApparitionIdentifier, apparitionSpellUuids, false);
+        for (const entry of [spellsEntry, getRestrictedArchetypeEntry(actor)].filter(Boolean))
+            collectRemovals(entry, hasApparitionIdentifier, apparitionSpellUuids, false);
         collectRemovals(vesselEntry, hasVesselIdentifier, apparitionVesselUuid ? new Set([apparitionVesselUuid]) : new Set(), true);
 
         // Lore skills this apparition grants, mirroring the same tracked/legacy
@@ -2646,7 +2742,7 @@ async function syncFeatureSpells(actor) {
         if (toDelete.length) await actor.deleteEmbeddedDocuments("Item", toDelete);
         result.removed = toDelete.length;
 
-        if (presentDefinitions.length && actorHasApparitionAccess(actor)) {
+        if (presentDefinitions.length && getAnimistCastingMode(actor) === "class") {
             const entry = existingEntry ?? (await ensureApparitionSpellcastingEntry(actor));
             if (hasSupremeSlot(actor) && !((entry.system.slots?.slot10?.max ?? 0) > 0)) {
                 await entry.update({ "system.slots.slot10": { value: 1, max: 1 } });
@@ -2664,7 +2760,7 @@ async function syncFeatureSpells(actor) {
                             entry,
                             identifierFlagValue: getApparitionIdentifier(),
                             apparitionKey: claim,
-                            clearSignature: true,
+                            signature: true,
                             maxRank: getEntryMaxRank(entry),
                         });
                         continue;
@@ -2781,14 +2877,15 @@ function apparitionStillGrantsAnything(actor, apparitionItem) {
  * @param {object} options.entry SpellcastingEntryPF2e to attach the spell to.
  * @param {string} options.identifierFlagValue The module's `identifier` flag value for this entry.
  * @param {string} options.apparitionKey
- * @param {boolean} options.clearSignature Whether to explicitly force `system.location.signature` off (only meaningful for the spontaneous entry).
+ * @param {boolean} options.signature Whether this is a spontaneous signature spell; omitted for focus/prepared entries.
  * @param {number} [options.maxRank] If given, a non-cantrip spell above this rank is skipped (returns null) - a rank the actor cannot cast yet is never granted. Not meaningful for the Vessel (focus) entry, which isn't rank-limited the same way.
  * @returns {Promise<object|null>}
  */
-async function buildManagedSpellSource(uuid, { entry, identifierFlagValue, apparitionKey, clearSignature, maxRank }) {
+async function buildManagedSpellSource(uuid, { entry, identifierFlagValue, apparitionKey, signature, maxRank }) {
     const spellDoc = await fromUuid(uuid);
     if (!spellDoc?.isOfType?.("spell")) return null;
 
+    if (identifierFlagValue === `${getApparitionIdentifier()}-restricted` && spellDoc.isCantrip) return null;
     if (typeof maxRank === "number" && !spellDoc.isCantrip) {
         const rank = spellDoc.baseRank ?? spellDoc.system?.level?.value ?? 1;
         if (rank > maxRank) return null;
@@ -2797,9 +2894,7 @@ async function buildManagedSpellSource(uuid, { entry, identifierFlagValue, appar
     const source = spellDoc.toObject();
     source._id = foundry.utils.randomID();
     foundry.utils.setProperty(source, "system.location.value", entry.id);
-    if (clearSignature) {
-        foundry.utils.setProperty(source, "system.location.signature", false);
-    }
+    if (signature === true && !spellDoc.isCantrip) foundry.utils.setProperty(source, "system.location.signature", true);
     foundry.utils.setProperty(source, `flags.${MODULE_ID}.identifier`, identifierFlagValue);
     foundry.utils.setProperty(source, `flags.${APPARITION_SOURCES_PATH}`, [apparitionKey]);
     // Stamp the compendium origin explicitly so `spell.sourceId` (used to
@@ -2867,6 +2962,7 @@ function getAnimistMaxSpellRank(actor) {
  * @returns {Promise<object>} The (possibly newly-created) spontaneous entry.
  */
 async function ensureApparitionSpellcastingEntry(actor) {
+    if (getAnimistCastingMode(actor) === "archetype") return ensureArchetypeEntry(actor);
     const existing = getApparitionEntry(actor);
     if (existing) return existing;
 
@@ -2888,7 +2984,7 @@ async function ensureApparitionSpellcastingEntry(actor) {
         // translated names.
         name: "Apparition Spellcasting",
         system: {
-            ability: { value: actor.classDC?.attribute || "wis" },
+            ability: { value: "wis" },
             prepared: { value: "spontaneous" },
             showSlotlessLevels: { value: false },
             proficiency: { value: 1, slug: "" },
@@ -2912,6 +3008,7 @@ async function ensureApparitionSpellcastingEntry(actor) {
  * @returns {Promise<object>} The (possibly newly-created) focus entry.
  */
 async function ensureVesselSpellcastingEntry(actor) {
+    if (getAnimistCastingMode(actor) === "archetype") return null;
     const existing = getVesselEntry(actor);
     if (existing) return existing;
 
@@ -2921,7 +3018,7 @@ async function ensureVesselSpellcastingEntry(actor) {
         // in English on purpose.
         name: "Vessel Spells",
         system: {
-            ability: { value: actor.classDC?.attribute || "wis" },
+            ability: { value: "wis" },
             prepared: { value: "focus" },
             showSlotlessLevels: { value: false },
             proficiency: { value: 1, slug: "" },
@@ -2950,7 +3047,11 @@ async function ensureVesselSpellcastingEntry(actor) {
  * @param {Item|string} apparition The apparition feat item (embedded, world, or compendium), or its UUID.
  * @returns {Promise<{ created: string[], updated: string[], apparitionFeatId?: string }>}
  */
-async function addApparition(actor, apparition, { silent = false, autoPrimary = true } = {}) {
+async function addApparition(actor, apparition, options = {}) {
+    return queueApparitionOperation(actor, () => addApparitionNow(actor, apparition, options));
+}
+
+async function addApparitionNow(actor, apparition, { silent = false, autoPrimary = true } = {}) {
     const result = { created: [], updated: [] };
     if (!isEnabled() || game.system.id !== "pf2e") {
         ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.Notify.ModuleDisabled`));
@@ -2972,12 +3073,12 @@ async function addApparition(actor, apparition, { silent = false, autoPrimary = 
         const apparitionSpellUuidsForEntry = parseApparitionSpellUuids(apparitionItem);
         const apparitionVesselUuidForEntry = parseApparitionVesselUuid(apparitionItem);
 
-        let spellsEntry = getApparitionEntry(actor);
+        let spellsEntry = getAnimistCastingMode(actor) === "archetype" ? await ensureArchetypeEntry(actor) : getApparitionEntry(actor);
         if (!spellsEntry && apparitionSpellUuidsForEntry.length) {
             spellsEntry = await ensureApparitionSpellcastingEntry(actor);
         }
 
-        let vesselEntry = getVesselEntry(actor);
+        let vesselEntry = getAnimistCastingMode(actor) === "archetype" ? null : getVesselEntry(actor);
         if (!vesselEntry && apparitionVesselUuidForEntry) {
             vesselEntry = await ensureVesselSpellcastingEntry(actor);
         }
@@ -2990,6 +3091,10 @@ async function addApparition(actor, apparition, { silent = false, autoPrimary = 
         result.apparitionFeatId = apparitionFeat.id;
         await syncBondedApparitionsFlag(actor);
 
+        if (isApparitionBenefitSuspended(actor, key)) {
+            await syncApparitionLoreRuleElements(actor, apparitionFeat);
+            return result;
+        }
         const toCreate = [];
         const toUpdate = [];
         // Spells to create are collected here and resolved together with
@@ -3032,11 +3137,27 @@ async function addApparition(actor, apparition, { silent = false, autoPrimary = 
                 entry: spellsEntry,
                 identifierFlagValue: getApparitionIdentifier(),
                 apparitionKey: key,
-                clearSignature: true,
+                signature: spellsEntry.system.prepared.value === "spontaneous",
                 // Never grant a rank the actor cannot cast yet.
-                maxRank: getEntryMaxRank(spellsEntry),
+                maxRank:
+                    getAnimistCastingMode(actor) === "archetype" ? getArchetypeProgression(actor).maxRank : getEntryMaxRank(spellsEntry),
             });
         }
+
+        const restrictedEntry = getAnimistCastingMode(actor) === "archetype" ? getRestrictedArchetypeEntry(actor) : null;
+        if (restrictedEntry)
+            for (const uuid of spellUuids) {
+                const existing = findEntrySpellBySource(restrictedEntry, uuid, hasApparitionIdentifier);
+                if (existing) claimExisting(existing, { sourceId: uuid });
+                else
+                    toBuild.push({
+                        uuid,
+                        entry: restrictedEntry,
+                        identifierFlagValue: `${getApparitionIdentifier()}-restricted`,
+                        apparitionKey: key,
+                        maxRank: getArchetypeProgression(actor).bonusMaxRank,
+                    });
+            }
 
         if (vesselEntry && vesselUuid) {
             const existing = findEntrySpellBySource(vesselEntry, vesselUuid, hasVesselIdentifier);
@@ -3048,7 +3169,7 @@ async function addApparition(actor, apparition, { silent = false, autoPrimary = 
                     entry: vesselEntry,
                     identifierFlagValue: getVesselIdentifier(),
                     apparitionKey: key,
-                    clearSignature: false,
+                    signature: false,
                     // The Vessel spell isn't rank-limited by slots the way the
                     // spontaneous list is - no maxRank here.
                 });
@@ -3139,7 +3260,7 @@ function getApparitionState(actor) {
  */
 function collectCurrentGrantKeys(actor, { sourceId = null, loreName = null, vessel = false } = {}) {
     const normalized = loreName ? normalizeLoreName(loreName) : null;
-    return getBondedApparitionFeats(actor)
+    return getActiveApparitionFeats(actor)
         .filter((feat) => {
             if (vessel) return parseApparitionVesselUuid(feat) === sourceId;
             if (normalized) return parseApparitionLores(feat).some((name) => normalizeLoreName(name) === normalized);
@@ -3259,6 +3380,7 @@ Hooks.on("createItem", (item, _options, userId) => {
  * API or reads its settings.
  */
 async function migrateLegacyDailiesState() {
+    if (!isEnabled()) return;
     const actors = (game.actors ?? []).filter((actor) => actor.type === "character" && actorCanModify(actor));
     for (const actor of actors) {
         if (actor.getFlag(MODULE_ID, "migrated")) {
@@ -3280,8 +3402,9 @@ async function migrateLegacyDailiesState() {
                 const identifier = isLegacyApparitionEntry ? getApparitionIdentifier() : getVesselIdentifier();
                 await item.setFlag(MODULE_ID, "identifier", identifier);
                 await item.setFlag(MODULE_ID, "temporary", true);
-            } else if (isManagedGrant || oldTemporary) {
-                if (oldTemporary || isManagedGrant) await item.setFlag(MODULE_ID, "temporary", true);
+            } else if (isManagedGrant || (oldTemporary && item.system?.traits?.otherTags?.includes("animist-apparition"))) {
+                // Dailies owns other temporary items too; never adopt unrelated daily grants.
+                await item.setFlag(MODULE_ID, "temporary", true);
             }
         }
 
@@ -3382,7 +3505,7 @@ async function migrateLegacyDailiesState() {
  * Lore items are left alone.
  */
 async function migrateApparitionLoresToRuleElements() {
-    if (!supportsLoreRuleElements()) return;
+    if (!isEnabled() || !supportsLoreRuleElements()) return;
 
     const actors = (game.actors ?? []).filter((actor) => actor.type === "character" && actorCanModify(actor));
     for (const actor of actors) {
@@ -3424,6 +3547,274 @@ Hooks.on("updateActor", (actor, changes, _options, userId) => {
     );
 });
 
+/* -------------------------------------------- */
+/* Class / archetype spellcasting               */
+/* -------------------------------------------- */
+
+const ARCHETYPE_FEATS = {
+    basic: { slug: "basic-animist-spellcasting", sources: itemSources("feats-srd", "feats", "l64p70oQ6a3AtMq9") },
+    expert: { slug: "expert-animist-spellcasting", sources: itemSources("feats-srd", "feats", "UrFeYPLjbWNYMpYA") },
+    master: { slug: "master-animist-spellcasting", sources: itemSources("feats-srd", "feats", "WXEOriht1LBz55R0") },
+    magic: { slug: "apparition-magic", sources: itemSources("feats-srd", "feats", "rmmqfzs9XYR9XDok") },
+};
+
+function getArchetypeProgression(actor) {
+    const level = actor.level ?? 1;
+    let maxRank = 0;
+    if (findFeature(actor, ARCHETYPE_FEATS.basic) && level >= 4) maxRank = level >= 8 ? 3 : level >= 6 ? 2 : 1;
+    if (findFeature(actor, ARCHETYPE_FEATS.expert) && level >= 12) maxRank = level >= 16 ? 6 : level >= 14 ? 5 : 4;
+    if (findFeature(actor, ARCHETYPE_FEATS.master) && level >= 18) maxRank = level >= 20 ? 8 : 7;
+    return {
+        maxRank,
+        bonusMaxRank: findFeature(actor, ARCHETYPE_FEATS.magic) ? Math.max(0, maxRank - 2) : 0,
+        proficiency: findFeature(actor, ARCHETYPE_FEATS.master) ? 3 : findFeature(actor, ARCHETYPE_FEATS.expert) ? 2 : 1,
+    };
+}
+
+function getRestrictedArchetypeEntry(actor) {
+    return actor.spellcasting?.find((entry) => entry.flags?.[MODULE_ID]?.identifier === `${getApparitionIdentifier()}-restricted`) ?? null;
+}
+
+async function backupManagedCasting(actor) {
+    if (actor.getFlag(MODULE_ID, "rulesBackup120")) return;
+    const items = actor.items.filter((item) => hasApparitionIdentifier(item.flags) || hasVesselIdentifier(item.flags));
+    if (items.length) await actor.setFlag(MODULE_ID, "rulesBackup120", { version: "1.2.0", items: items.map((item) => item.toObject()) });
+}
+
+const archetypeEntryOperations = new WeakMap();
+function ensureArchetypeEntry(actor) {
+    const previous = archetypeEntryOperations.get(actor) ?? Promise.resolve();
+    const operation = previous.catch(() => {}).then(() => ensureArchetypeEntryNow(actor));
+    archetypeEntryOperations.set(actor, operation);
+    const cleanup = () => {
+        if (archetypeEntryOperations.get(actor) === operation) archetypeEntryOperations.delete(actor);
+    };
+    operation.then(cleanup, cleanup);
+    return operation;
+}
+async function ensureArchetypeEntryNow(actor) {
+    const progression = getArchetypeProgression(actor);
+    const reconcile = async (existing, restricted) => {
+        const maxRank = restricted ? progression.bonusMaxRank : progression.maxRank;
+        if (!existing && restricted && !maxRank) return null;
+        const signature = JSON.stringify({ ...progression, restricted });
+        if (existing?.getFlag(MODULE_ID, "archetypeProgression") === signature) return existing;
+        if (existing) await backupManagedCasting(actor);
+        const converted = existing && existing.system.prepared.value !== "prepared";
+        const slots = {};
+        for (let rank = 0; rank <= 10; rank++) {
+            const max = rank === 0 ? (restricted ? 0 : 2) : rank <= maxRank ? 1 : 0;
+            const old = existing?.system.slots?.[`slot${rank}`];
+            slots[`slot${rank}`] = { max, value: max, prepared: !converted && max ? (old?.prepared ?? {}) : {} };
+        }
+        const system = {
+            ability: { value: "wis" },
+            prepared: { value: "prepared", flexible: false },
+            tradition: { value: "divine" },
+            proficiency: { value: progression.proficiency, slug: "" },
+            showSlotlessLevels: { value: false },
+            slots,
+        };
+        let entry = existing;
+        if (entry) {
+            const clearPrepared = {};
+            for (let rank = 0; rank <= 10; rank++) {
+                if (converted || !slots[`slot${rank}`].max)
+                    for (const id of Object.keys(entry.system.slots?.[`slot${rank}`]?.prepared ?? {})) {
+                        clearPrepared[`system.slots.slot${rank}.prepared.-=${id}`] = null;
+                    }
+            }
+            await entry.update({ system, ...clearPrepared, [`flags.${MODULE_ID}.archetypeProgression`]: signature });
+        } else {
+            [entry] = await actor.createEmbeddedDocuments("Item", [
+                {
+                    type: "spellcastingEntry",
+                    name: restricted ? game.i18n.localize(`${MODULE_ID}.Rules.RestrictedEntry`) : "Animist Archetype Spellcasting",
+                    system,
+                    flags: {
+                        [MODULE_ID]: {
+                            identifier: restricted ? `${getApparitionIdentifier()}-restricted` : getApparitionIdentifier(),
+                            temporary: true,
+                            archetypeProgression: signature,
+                        },
+                    },
+                },
+            ]);
+        }
+        // Only remove grants carrying our ownership flags, never another entry's spells.
+        const invalid = [...(entry.spells?.values() ?? [])].filter(
+            (spell) =>
+                hasApparitionIdentifier(spell.flags) && !spell.isCantrip && (spell.baseRank ?? spell.system.level?.value ?? 1) > maxRank,
+        );
+        if (invalid.length) {
+            await backupManagedCasting(actor);
+            await actor.deleteEmbeddedDocuments(
+                "Item",
+                invalid.map((spell) => spell.id),
+            );
+        }
+        return entry;
+    };
+    const entry = await reconcile(getApparitionEntry(actor), false);
+    await reconcile(getRestrictedArchetypeEntry(actor), true);
+    const vessel = getVesselEntry(actor);
+    if (vessel) {
+        await backupManagedCasting(actor);
+        // Dedication does not grant Vessel. Remove only the module-managed entry/spells.
+        const ids = [...(vessel.spells?.values() ?? [])].filter((spell) => hasVesselIdentifier(spell.flags)).map((spell) => spell.id);
+        await actor.deleteEmbeddedDocuments("Item", [...ids, vessel.id]);
+    }
+    return entry;
+}
+
+async function migrateAnimistRules() {
+    if (!isEnabled() || game.system.id !== "pf2e") return;
+    for (const actor of game.actors ?? []) {
+        if (actor.type !== "character" || !actorCanModify(actor)) continue;
+        const mode = getAnimistCastingMode(actor);
+        if (mode === "archetype") {
+            await ensureArchetypeEntry(actor);
+            for (const feat of getBondedApparitionFeats(actor)) await addApparition(actor, feat, { silent: true, autoPrimary: false });
+        } else if (mode === "class") {
+            const updates = actor.itemTypes.spell
+                .filter((spell) => isManagedSignatureSpell(spell) && !spell.system.location?.signature)
+                .map((spell) => ({ _id: spell.id, "system.location.signature": true }));
+            if (updates.length) await actor.updateEmbeddedDocuments("Item", updates);
+            for (const entry of [getApparitionEntry(actor), getVesselEntry(actor)].filter(Boolean)) {
+                if (entry.system.ability?.value !== "wis") await entry.update({ "system.ability.value": "wis" });
+            }
+        }
+    }
+}
+
+// Refresh only the actor edited by this client. Avoid running on our spell writes.
+const archetypeRefreshes = new WeakMap();
+function scheduleArchetypeRefresh(actor) {
+    if (!isEnabled() || !actorCanModify(actor) || getAnimistCastingMode(actor) !== "archetype") return;
+    clearTimeout(archetypeRefreshes.get(actor));
+    archetypeRefreshes.set(
+        actor,
+        setTimeout(async () => {
+            try {
+                await ensureArchetypeEntry(actor);
+                for (const feat of getBondedApparitionFeats(actor)) await addApparition(actor, feat, { silent: true, autoPrimary: false });
+            } catch (error) {
+                notifyOperationFailed(error);
+            }
+        }, 100),
+    );
+}
+Hooks.on("updateActor", (actor, changes, _options, userId) => {
+    if (userId !== game.user.id) return;
+    if (changes["system.details.level.value"] !== undefined || changes.system?.details?.level?.value !== undefined)
+        scheduleArchetypeRefresh(actor);
+});
+for (const hook of ["createItem", "deleteItem", "updateItem"])
+    Hooks.on(hook, (item, ...args) => {
+        const userId = args.at(-1);
+        if (
+            item.type !== "feat" ||
+            userId !== game.user.id ||
+            !Object.values(ARCHETYPE_FEATS).some((feat) => feat.slug === item.slug || feat.sources.includes(getFeatSource(item)))
+        )
+            return;
+        scheduleArchetypeRefresh(item.parent);
+    });
+
+/* -------------------------------------------- */
+/* Spirit Familiar: explicit, reversible state   */
+/* -------------------------------------------- */
+const SPIRIT_FAMILIAR = {
+    slug: "spirit-familiar-animist",
+    sources: ["Compendium.pf2e.feats-srd.Item.8VvRnIQI2x9bmlmQ", "Compendium.pf2e-anachronism.feats.Item.8VvRnIQI2x9bmlmQ"],
+};
+function getSpiritFamiliarState(actor) {
+    const stored = actor?.getFlag(MODULE_ID, "spiritFamiliar") ?? {};
+    return {
+        available: !!findFeature(actor, SPIRIT_FAMILIAR),
+        key: typeof stored.key === "string" ? stored.key : null,
+        actorUuid: typeof stored.actorUuid === "string" ? stored.actorUuid : null,
+        status: stored.status === "destroyed" ? "destroyed" : "active",
+    };
+}
+function isApparitionBenefitSuspended(actor, key) {
+    const state = getSpiritFamiliarState(actor);
+    return state.available && state.key === key && state.status === "destroyed";
+}
+async function setSpiritFamiliar(actor, key, actorUuid = null) {
+    if (!isEnabled() || !requireActorOwner(actor) || !getSpiritFamiliarState(actor).available) return false;
+    const feat = getBondedApparitionFeats(actor).find((feat) => getApparitionKey(feat) === key);
+    if (!feat) return false;
+    const familiar = actorUuid ? await fromUuid(actorUuid).catch(() => null) : null;
+    if (actorUuid && !familiar?.isOfType?.("familiar")) return false;
+    const previous = getSpiritFamiliarState(actor);
+    if (previous.key && previous.key !== key) {
+        const confirmed = await foundry.applications.api.DialogV2.confirm({
+            window: { title: game.i18n.localize(`${MODULE_ID}.Familiar.Link`) },
+            content: `<p>${foundry.utils.escapeHTML(game.i18n.localize(`${MODULE_ID}.Familiar.RelinkHint`))}</p>`,
+        });
+        if (!confirmed) return false;
+    }
+    // Editing the link does not silently restore a dead apparition's benefits.
+    const wasDestroyed = previous.status === "destroyed";
+    if (wasDestroyed && previous.key && previous.key !== key) {
+        await actor.unsetFlag(MODULE_ID, "spiritFamiliar");
+        const oldFeat = getBondedApparitionFeats(actor).find((feat) => getApparitionKey(feat) === previous.key);
+        if (oldFeat) await addApparition(actor, oldFeat, { silent: true, autoPrimary: false });
+    }
+    await actor.setFlag(MODULE_ID, "spiritFamiliar", {
+        key,
+        actorUuid: familiar?.uuid ?? null,
+        status: wasDestroyed ? "destroyed" : "active",
+    });
+    if (wasDestroyed) await markSpiritFamiliarDestroyed(actor);
+    return true;
+}
+async function markSpiritFamiliarDestroyed(actor) {
+    if (!isEnabled() || !requireActorOwner(actor)) return false;
+    return queueApparitionOperation(actor, async () => {
+        const state = getSpiritFamiliarState(actor);
+        if (!state.available || !state.key) return false;
+        await actor.setFlag(MODULE_ID, "spiritFamiliar", { ...state, status: "destroyed" });
+        const feat = getBondedApparitionFeats(actor).find((feat) => getApparitionKey(feat) === state.key);
+        if (!feat) return true;
+        // Keep the attuned apparition, but remove its spell/Lore/Vessel benefits.
+        const saved = feat.toObject();
+        await removeApparitionNow(actor, feat, { silent: true, preserveFamiliar: true });
+        delete saved._id;
+        const [restored] = await actor.createEmbeddedDocuments("Item", [saved]);
+        await linkApparitionFeatToParent(actor, restored);
+        await syncApparitionLoreRuleElements(actor, restored);
+        await syncBondedApparitionsFlag(actor);
+        return true;
+    });
+}
+async function remanifestSpiritFamiliar(actor) {
+    if (!isEnabled() || !requireActorOwner(actor)) return false;
+    const state = getSpiritFamiliarState(actor);
+    if (!state.available || !state.key) return false;
+    const source =
+        getBondedApparitionFeats(actor).find((feat) => getApparitionKey(feat) === state.key) ??
+        (await fromUuid(state.key).catch(() => null));
+    if (!source?.isOfType?.("feat")) return false;
+    const confirmed = await foundry.applications.api.DialogV2.confirm({
+        window: { title: game.i18n.localize(`${MODULE_ID}.Familiar.Remanifest`) },
+        content: `<p>${foundry.utils.escapeHTML(game.i18n.localize(`${MODULE_ID}.Familiar.RemanifestHint`))}</p>`,
+    });
+    if (!confirmed) return false;
+    await actor.setFlag(MODULE_ID, "spiritFamiliar", { ...state, status: "active" });
+    const result = await addApparition(actor, source, { silent: true, autoPrimary: false });
+    return !!result.apparitionFeatId;
+}
+Hooks.on("deleteActor", (deleted, _options, userId) => {
+    if (!isEnabled() || userId !== game.user.id) return;
+    for (const actor of game.actors ?? []) {
+        if (getSpiritFamiliarState(actor).actorUuid === deleted.uuid && actorCanModify(actor)) {
+            void markSpiritFamiliarDestroyed(actor).catch(notifyOperationFailed);
+        }
+    }
+});
+
 const fixCurrentAnimist = repairApparitionActor;
 
 export {
@@ -3433,6 +3824,7 @@ export {
     getFeatSource,
     isAnimistClass,
     ordinalString,
+    openCastDialog,
     addListenerAll,
     attachIconFallback,
     getSheetRoot,
@@ -3471,6 +3863,14 @@ export {
     syncDailiesIsolation,
     getPermanentApparition,
     setPermanentApparition,
+    getAnimistCastingMode,
+    getAttunementSummary,
+    getSpiritFamiliarState,
+    setSpiritFamiliar,
+    markSpiritFamiliarDestroyed,
+    remanifestSpiritFamiliar,
+    migrateAnimistRules,
+    getArchetypeProgression,
     syncFeatureSpells,
     promptPrimaryChange,
     changePrimaryApparition,

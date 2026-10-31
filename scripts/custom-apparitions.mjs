@@ -996,21 +996,8 @@ async function importCustomApparitionData(data) {
     });
     if (!item) return null;
 
-    const newVesselUuid = parseApparitionVesselUuid(item);
-    const newVessel = newVesselUuid ? await fromUuid(newVesselUuid) : null;
-    const source = data.vessel?.source;
-    if (newVessel?.isOwner && source?.system) {
-        const system = foundry.utils.deepClone(source.system);
-        await newVessel.update({
-            name: vessel.name,
-            img: vessel.img,
-            system,
-        });
-        await newVessel.setFlag(MODULE_ID, "customApparitionSource", item.uuid);
-        await item.update({
-            "flags.pf2e-dailies-apparition-fix.origin": { type: "custom-apparition", vesselUuid: newVessel.uuid },
-        });
-    }
+    // saveCustomApparition already merged source.system with the normalized editor fields.
+    // Reapplying the raw source here would undo the mandatory focus/animist traits.
     return item;
 }
 

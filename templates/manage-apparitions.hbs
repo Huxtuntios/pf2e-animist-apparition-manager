@@ -1,200 +1,35 @@
-<div class="apparition-fix-manage-body">
-    <fieldset class="apparition-fix-profiles">
-        <legend>{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.Legend"}}</legend>
-        <div class="apparition-fix-profile-controls">
-            <select name="profileId">
-                <option value="">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.Select"}}</option>
-                {{#each profiles}}
-                <option value="{{this.id}}">{{this.label}}</option>
-                {{/each}}
-            </select>
-            <input type="text" name="profileName" placeholder="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Profiles.NamePlaceholder'}}" />
-        </div>
-        <div class="apparition-fix-profile-actions">
-            <button type="button" data-action="save-profile"><i class="fa-solid fa-floppy-disk"></i> {{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.Save"}}</button>
-            <button type="button" data-action="apply-profile" {{#unless hasProfiles}}disabled{{/unless}}><i class="fa-solid fa-bolt"></i> {{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.Apply"}}</button>
-            <button type="button" data-action="delete-profile" {{#unless hasProfiles}}disabled{{/unless}}><i class="fa-solid fa-trash"></i> {{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.Delete"}}</button>
-            {{#if hasLastDaySnapshot}}
-            <button type="button" data-action="restore-yesterday"><i class="fa-solid fa-clock-rotate-left"></i> {{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.RestoreYesterday"}}</button>
-            {{/if}}
-        </div>
-        <p class="hint">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.Hint"}}</p>
-        {{#each profiles}}
-        <div class="apparition-fix-profile-preview" data-profile-preview="{{this.id}}" hidden>
-            <ul>
-                {{#each this.preview}}
-                <li class="{{#if this.missing}}missing{{/if}}">
-                    <img src="{{this.img}}" alt="" />
-                    <span class="name">{{this.name}}</span>
-                    {{#if this.primary}}<i class="fa-solid fa-star" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Profiles.PreviewPrimary'}}"></i>{{/if}}
-                    <span class="state">{{#if this.missing}}⚠ {{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.PreviewMissing"}}{{else if this.bonded}}✓ {{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.PreviewBonded"}}{{else}}+ {{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.PreviewToBind"}}{{/if}}</span>
-                </li>
-                {{else}}
-                <li class="empty">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.PreviewEmpty"}}</li>
-                {{/each}}
-                {{#if this.toUnbind.length}}
-                <li class="unbind">− {{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.PreviewToUnbind"}}: {{#each this.toUnbind}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}</li>
-                {{/if}}
-            </ul>
-        </div>
-        {{/each}}
-    </fieldset>
-
-    <fieldset class="apparition-fix-focus-override">
-        <legend>{{localize "pf2e-dailies-apparition-fix.ManageApparitions.PrimaryLegend"}}</legend>
-        <div class="apparition-fix-focus-override-row">
-            <label for="apparition-fix-focus-override">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.FocusPool.Label"}}</label>
-            <input type="number" min="0" step="1" id="apparition-fix-focus-override" name="focusOverrideInput" value="{{#if hasFocusOverride}}{{focusOverride}}{{else}}{{focusMax}}{{/if}}" />
-            <button type="button" data-action="set-focus-override">
-                <i class="fa-solid fa-check"></i>
-                {{localize "pf2e-dailies-apparition-fix.ManageApparitions.FocusPool.Set"}}
-            </button>
-            {{#if hasFocusOverride}}
-            <button type="button" data-action="clear-focus-override">
-                <i class="fa-solid fa-rotate-left"></i>
-                {{localize "pf2e-dailies-apparition-fix.ManageApparitions.FocusPool.Reset"}}
-            </button>
-            {{/if}}
-        </div>
-        <div class="apparition-fix-auto-primary">
-            <span>{{localize "pf2e-dailies-apparition-fix.ManageApparitions.AutoPrimary.Label"}}: <strong>{{#if autoPrimary}}{{localize "pf2e-dailies-apparition-fix.ManageApparitions.AutoPrimary.On"}}{{else}}{{localize "pf2e-dailies-apparition-fix.ManageApparitions.AutoPrimary.Off"}}{{/if}}</strong></span>
-            {{#if isGM}}<button type="button" data-action="toggle-auto-primary">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.AutoPrimary.Toggle"}}</button>{{/if}}
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Bonded"}}</legend>
-        <ol class="apparition-fix-apparition-list">
-            {{#each bonded}}
-            <li data-id="{{this.id}}" class="{{#if this.stale}}stale{{/if}}">
-                <details class="apparition-fix-grants">
-                    <summary>
-                        <img src="{{this.img}}" alt="" />
-                        <span class="name">{{this.name}}</span>
-                        {{#if this.isPermanent}}<i class="fa-solid fa-thumbtack apparition-fix-permanent-pin" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Permanent.Pinned'}}"></i>{{/if}}
-                        <a data-action="open-apparition-source" data-uuid="{{this.key}}" data-item-id="{{this.id}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.OpenApparitionHint'}}"><i class="fa-solid fa-book-open"></i></a>
-                        {{#if this.canTogglePrimary}}
-                        <a
-                            data-action="toggle-primary"
-                            data-key="{{this.key}}"
-                            class="apparition-fix-primary-toggle {{#if this.vesselIsPrimary}}active{{/if}}"
-                            title="{{this.primaryTitle}}"
-                        >
-                            <i class="fa-{{#if this.vesselIsPrimary}}solid{{else}}regular{{/if}} fa-star"></i>
-                        </a>
-                        {{/if}}
-                        {{#if this.stale}}
-                        <i class="fa-solid fa-triangle-exclamation stale-icon" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Stale'}}"></i>
-                        {{/if}}
-                    </summary>
-                    <ul class="apparition-fix-grants-list">
-                        {{#each this.spells}}
-                        <li>
-                            <a class="apparition-fix-spell-link" data-action="open-spell-source" data-uuid="{{this.uuid}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.OpenSpellHint'}}">
-                                <img src="{{this.img}}" alt="" />
-                                <span class="rank">{{this.rankLabel}}</span>
-                                <span class="name">{{this.name}}</span>
-                            </a>
-                        </li>
-                        {{/each}}
-                        {{#if this.vessel}}
-                        <li>
-                            <a class="apparition-fix-spell-link" data-action="open-spell-source" data-uuid="{{this.vessel.uuid}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.OpenSpellHint'}}">
-                                <img src="{{this.vessel.img}}" alt="" />
-                                <span class="rank">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Vessel"}}</span>
-                                <span class="name">{{this.vessel.name}}</span>
-                            </a>
-                        </li>
-                        {{/if}}
-                        {{#each this.lores}}
-                        <li class="lore"><i class="fa-solid fa-book"></i><span class="name">{{this}}</span></li>
-                        {{/each}}
-                        {{#unless this.hasGrants}}
-                        <li class="empty">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.NoGrants"}}</li>
-                        {{/unless}}
-                    </ul>
-                </details>
-                <a data-action="unbond" data-id="{{this.id}}" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Unbond'}}">
-                    <i class="fa-solid fa-link-slash"></i>
-                </a>
-            </li>
-            {{else}}
-            <li class="empty">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.NoneBonded"}}</li>
-            {{/each}}
-        </ol>
-    </fieldset>
-
-    <fieldset>
-        <legend>{{localize "pf2e-dailies-apparition-fix.ManageApparitions.BondNew"}}</legend>
-        <p class="hint">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.BondNewHint"}}</p>
-
-        <div class="apparition-fix-search-row">
-            <input
-                type="text"
-                data-role="apparition-search"
-                placeholder="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.SearchPlaceholder'}}"
-            />
-            <button type="button" data-action="bond-random" {{#unless available.length}}disabled{{/unless}}>
-                <i class="fa-solid fa-dice"></i> {{localize "pf2e-dailies-apparition-fix.ManageApparitions.BondRandom"}}
-            </button>
-        </div>
-        <ol class="apparition-fix-apparition-list apparition-fix-available-list">
-            {{#each available}}
-            <li data-searchable="{{this.searchText}}">
-                <details class="apparition-fix-grants">
-                    <summary>
-                        <img src="{{this.img}}" alt="" />
-                        <div class="apparition-fix-available-info">
-                            <span class="name">{{this.name}}</span>
-                            {{#if this.loresText}}
-                            <span class="lores">{{this.loresText}}</span>
-                            {{/if}}
-                        </div>
-                    </summary>
-                    <ul class="apparition-fix-grants-list">
-                        {{#each this.spells}}
-                        <li>
-                            <a class="apparition-fix-spell-link" data-action="open-spell-source" data-uuid="{{this.uuid}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.OpenSpellHint'}}">
-                                <img src="{{this.img}}" alt="" />
-                                <span class="rank">{{this.rankLabel}}</span>
-                                <span class="name">{{this.name}}</span>
-                            </a>
-                        </li>
-                        {{/each}}
-                        {{#if this.vessel}}
-                        <li>
-                            <a class="apparition-fix-spell-link" data-action="open-spell-source" data-uuid="{{this.vessel.uuid}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.OpenSpellHint'}}">
-                                <img src="{{this.vessel.img}}" alt="" />
-                                <span class="rank">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Vessel"}}</span>
-                                <span class="name">{{this.vessel.name}}</span>
-                            </a>
-                        </li>
-                        {{/if}}
-                        {{#unless this.hasGrants}}
-                        <li class="empty">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.NoGrants"}}</li>
-                        {{/unless}}
-                    </ul>
-                </details>
-                {{#if ../isGM}}
-                <a data-action="copy-custom" data-uuid="{{this.uuid}}" title="{{localize 'pf2e-dailies-apparition-fix.CustomApparition.Copy'}}">
-                    <i class="fa-solid fa-copy"></i>
-                </a>
-                {{/if}}
-                <a data-action="open-apparition-source" data-uuid="{{this.uuid}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.OpenApparitionHint'}}">
-                    <i class="fa-solid fa-book-open"></i>
-                </a>
-                <a data-action="bond" data-uuid="{{this.uuid}}" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Bond'}}">
-                    <i class="fa-solid fa-link"></i>
-                </a>
-            </li>
-            {{else if availableLoading}}
-            <li class="empty apparition-fix-loading">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.LoadingAvailable"}}</li>
-            {{else}}
-            <li class="empty">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.NoneAvailable"}}</li>
-            {{/each}}
-        </ol>
-    </fieldset>
-
+<div class="apparition-manager">
+ <header class="am-header"><div class="am-identity"><h2>{{actorName}}</h2><p class="am-eyebrow">{{castingMode}}</p></div><div class="am-focus"><span>{{localize "pf2e-dailies-apparition-fix.ManagerUI.Focus"}}</span><strong>{{focusValue}} / {{focusMax}}</strong></div></header>
+ <div class="am-attunement"><strong title="{{attunement.text}}">{{attunementCompact}}</strong><details class="am-rules" data-ui-section="attunement-rules"><summary>{{localize "pf2e-dailies-apparition-fix.ManagerUI.Rules"}}</summary><p class="am-muted">{{attunement.hint}}</p></details></div>
+ <nav class="am-tabs" role="tablist" aria-label="{{localize "pf2e-dailies-apparition-fix.ManagerUI.Navigation"}}"><button type="button" role="tab" id="{{instanceId}}-tab-apparitions" aria-controls="{{instanceId}}-panel-apparitions" data-manager-tab="apparitions" aria-selected="{{tabApparitions}}" tabindex="{{#if tabApparitions}}0{{else}}-1{{/if}}">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Apparitions"}}</button><button type="button" role="tab" id="{{instanceId}}-tab-abilities" aria-controls="{{instanceId}}-panel-abilities" data-manager-tab="abilities" aria-selected="{{tabAbilities}}" tabindex="{{#if tabAbilities}}0{{else}}-1{{/if}}">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Abilities"}}</button><button type="button" role="tab" id="{{instanceId}}-tab-profiles" aria-controls="{{instanceId}}-panel-profiles" data-manager-tab="profiles" aria-selected="{{tabProfiles}}" tabindex="{{#if tabProfiles}}0{{else}}-1{{/if}}">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Profiles"}}</button></nav><div class="am-panels">
+ <section class="am-apparitions" data-scroll-key="apparitions" data-manager-panel="apparitions" id="{{instanceId}}-panel-apparitions" role="tabpanel" aria-labelledby="{{instanceId}}-tab-apparitions" {{#unless tabApparitions}}hidden{{/unless}}>
+ <section class="am-column"><div class="am-section-heading"><h3>{{localize "pf2e-dailies-apparition-fix.ManagerUI.Bonded"}}</h3><span class="am-count">{{bonded.length}}</span></div><ol class="am-cards" data-scroll-key="bonded">{{#each bonded}}<li class="am-card am-card--bonded{{#if vesselIsPrimary}} am-card--primary{{/if}}" data-primary="{{vesselIsPrimary}}">
+ <div class="am-card-top"><img class="am-portrait" src="{{img}}" alt="" loading="lazy"><div class="am-card-name"><strong>{{name}}</strong><div class="am-badges">{{#if vesselIsPrimary}}<span class="am-badge am-primary">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Primary"}}</span>{{/if}}{{#if isPermanent}}<span class="am-badge">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Permanent"}}</span>{{/if}}{{#if suspended}}<span class="am-badge am-warning">{{localize "pf2e-dailies-apparition-fix.ManagerUI.BenefitsLost"}}</span>{{/if}}{{#if stale}}<span class="am-badge am-warning">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Stale"}}</span>{{/if}}</div></div></div>
+ {{#if loresText}}<p class="am-lores">{{loresText}}</p>{{/if}}
+ <div class="am-card-actions">{{#if canTogglePrimary}}<button type="button" class="am-icon" data-action="toggle-primary" data-key="{{key}}" title="{{primaryTitle}}" aria-label="{{primaryTitle}}" aria-pressed="{{vesselIsPrimary}}">{{#if vesselIsPrimary}}★{{else}}☆{{/if}}</button>{{/if}}<button type="button" class="am-icon" data-action="open-apparition-source" data-uuid="{{uuid}}" data-item-id="{{id}}" title="{{localize "pf2e-dailies-apparition-fix.ManageApparitions.OpenApparitionHint"}}">↗</button><button type="button" class="am-icon am-text-action" data-action="unbond" data-id="{{id}}" title="{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Unbond"}}" aria-label="{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Unbond"}}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true" focusable="false"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2"/><path d="m3 3 18 18"/></svg></button></div>
+ <details data-detail-key="{{key}}" {{#if expanded}}open{{/if}}><summary>{{localize "pf2e-dailies-apparition-fix.ManagerUI.SpellsAndVessel"}}</summary>
+ {{#if detailLoading}}<p class="am-muted" role="status">{{localize "pf2e-dailies-apparition-fix.ManagerUI.LoadingDetails"}}</p>{{/if}}
+ {{#if detailError}}<div class="am-notice am-warning" role="status">{{localize "pf2e-dailies-apparition-fix.ManagerUI.DetailsError"}} <button type="button" data-action="retry-details" data-key="{{key}}">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Retry"}}</button></div>{{/if}}
+ <ul class="am-grants">{{#each spells}}<li><button type="button" data-action="open-spell-source" data-uuid="{{uuid}}"><img src="{{img}}" alt="" loading="lazy"><span class="am-rank">{{rankLabel}}</span><span>{{name}}</span></button></li>{{/each}}
+ {{#if vessel}}<li><button type="button" data-action="open-spell-source" data-uuid="{{vessel.uuid}}"><img src="{{vessel.img}}" alt="" loading="lazy"><span class="am-rank">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Vessel"}}</span><span>{{vessel.name}}</span></button></li>{{/if}}</ul>
+ {{#if detailReady}}{{#unless detailError}}{{#unless hasGrants}}<p class="am-muted">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.NoGrants"}}</p>{{/unless}}{{/unless}}{{/if}}
+ </details></li>{{else}}<li class="am-empty">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.NoneBonded"}}</li>{{/each}}</ol></section>
+ <section class="am-column"><div class="am-section-heading"><h3>{{localize "pf2e-dailies-apparition-fix.ManagerUI.Catalog"}}</h3><span class="am-count">{{available.length}}</span></div>
+ <div class="am-search"><input type="search" name="apparitionSearch" data-role="apparition-search" placeholder="{{localize "pf2e-dailies-apparition-fix.ManageApparitions.SearchPlaceholder"}}" aria-label="{{localize "pf2e-dailies-apparition-fix.ManageApparitions.SearchPlaceholder"}}"><button type="button" class="am-icon" data-action="clear-search" title="{{localize "pf2e-dailies-apparition-fix.ManagerUI.ClearSearch"}}">×</button><button type="button" class="am-icon" data-action="bond-random" title="{{localize "pf2e-dailies-apparition-fix.ManageApparitions.BondRandom"}}" {{#unless available.length}}disabled{{/unless}}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true" focusable="false"><path d="M3 6h3c5 0 7 12 12 12h3M3 18h3c2 0 4-3 6-6s4-6 6-6h3M18 3l3 3-3 3M18 15l3 3-3 3"/></svg></button></div>
+ {{#if availableLoading}}<p class="am-notice" role="status">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.LoadingAvailable"}}</p>{{/if}}
+ {{#if catalogError}}<div class="am-notice am-warning" role="status">{{localize "pf2e-dailies-apparition-fix.ManagerUI.CatalogError"}} <button type="button" data-action="retry-catalog">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Retry"}}</button></div>{{/if}}
+ <ol class="am-cards" data-scroll-key="catalog">{{#each available}}<li class="am-card am-card--catalog" data-searchable="{{searchText}}">
+ <div class="am-card-top"><img class="am-portrait" src="{{img}}" alt="" loading="lazy"><div class="am-card-name"><strong>{{name}}</strong><div class="am-badges"></div></div></div>
+ {{#if loresText}}<p class="am-lores">{{loresText}}</p>{{/if}}
+ <div class="am-card-actions">{{#if @root.isGM}}<button type="button" class="am-icon" data-action="copy-custom" data-uuid="{{uuid}}" title="{{localize "pf2e-dailies-apparition-fix.CustomApparition.Copy"}}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true" focusable="false"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M15 5V4H4v11h1"/></svg></button>{{/if}}<button type="button" class="am-icon" data-action="open-apparition-source" data-uuid="{{uuid}}" data-item-id="{{id}}" title="{{localize "pf2e-dailies-apparition-fix.ManageApparitions.OpenApparitionHint"}}">↗</button><button type="button" class="am-icon am-text-action" data-action="bond" data-uuid="{{uuid}}" title="{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Bond"}}" aria-label="{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Bond"}}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true" focusable="false"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2"/></svg></button></div>
+ <details data-detail-key="{{key}}" {{#if expanded}}open{{/if}}><summary>{{localize "pf2e-dailies-apparition-fix.ManagerUI.SpellsAndVessel"}}</summary>
+ {{#if detailLoading}}<p class="am-muted" role="status">{{localize "pf2e-dailies-apparition-fix.ManagerUI.LoadingDetails"}}</p>{{/if}}
+ {{#if detailError}}<div class="am-notice am-warning" role="status">{{localize "pf2e-dailies-apparition-fix.ManagerUI.DetailsError"}} <button type="button" data-action="retry-details" data-key="{{key}}">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Retry"}}</button></div>{{/if}}
+ <ul class="am-grants">{{#each spells}}<li><button type="button" data-action="open-spell-source" data-uuid="{{uuid}}"><img src="{{img}}" alt="" loading="lazy"><span class="am-rank">{{rankLabel}}</span><span>{{name}}</span></button></li>{{/each}}
+ {{#if vessel}}<li><button type="button" data-action="open-spell-source" data-uuid="{{vessel.uuid}}"><img src="{{vessel.img}}" alt="" loading="lazy"><span class="am-rank">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Vessel"}}</span><span>{{vessel.name}}</span></button></li>{{/if}}</ul>
+ {{#if detailReady}}{{#unless detailError}}{{#unless hasGrants}}<p class="am-muted">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.NoGrants"}}</p>{{/unless}}{{/unless}}{{/if}}
+ </details></li>{{else}}{{#unless availableLoading}}{{#unless catalogError}}<li class="am-empty">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.NoneAvailable"}}</li>{{/unless}}{{/unless}}{{/each}}<li class="am-empty" data-role="search-empty" hidden>{{localize "pf2e-dailies-apparition-fix.ManagerUI.NoSearch"}}</li></ol></section></section>
+ <section class="am-abilities am-scroll" data-scroll-key="abilities" data-manager-panel="abilities" id="{{instanceId}}-panel-abilities" role="tabpanel" aria-labelledby="{{instanceId}}-tab-abilities" {{#unless tabAbilities}}hidden{{/unless}}>{{#unless hasAbilitySections}}<p class="am-empty">{{localize "pf2e-dailies-apparition-fix.ManagerUI.NoAbilities"}}</p>{{/unless}}
     {{#if permanent.show}}
     <fieldset class="apparition-fix-permanent">
         <legend>{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Permanent.Title"}}</legend>
@@ -204,21 +39,48 @@
             {{#if permanent.hasKey}}
             {{#if permanent.img}}<img src="{{permanent.img}}" alt="" />{{/if}}
             <strong class="name">{{permanent.name}}</strong>
-            <a data-action="open-apparition-source" data-uuid="{{permanent.key}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.OpenApparitionHint'}}"><i class="fa-solid fa-book-open"></i></a>
+            <button type="button" data-action="open-apparition-source" data-uuid="{{permanent.key}}" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.OpenApparitionHint'}}">↗</button>
             {{else}}
             <em>{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Permanent.None"}}</em>
             {{/if}}
         </div>
         <div class="apparition-fix-permanent-choose">
-            <select name="permanentApparition">
+            <select name="permanentApparition" aria-label="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Permanent.Choose'}}">
                 {{#unless permanent.hasKey}}<option value="">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Permanent.Choose"}}</option>{{/unless}}
                 {{#each permanent.options}}<option value="{{this.key}}" {{#if this.selected}}selected{{/if}}>{{this.name}}</option>{{/each}}
             </select>
-            <button type="button" data-action="set-permanent"><i class="fa-solid fa-thumbtack"></i> {{localize "pf2e-dailies-apparition-fix.ManageApparitions.Permanent.Set"}}</button>
+            <button type="button" data-action="set-permanent"><i class="fa-solid fa-thumbtack"></i> {{#if permanent.hasKey}}{{localize "pf2e-dailies-apparition-fix.Rules.PermanentChangeTitle"}}{{else}}{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Permanent.Set"}}{{/if}}</button>
         </div>
     </fieldset>
     {{/if}}
 
+
+    {{#if familiar.available}}
+    <fieldset class="apparition-fix-spirit-familiar">
+        <legend>{{localize "pf2e-dailies-apparition-fix.Familiar.Title"}}</legend>
+        <p class="hint">{{localize "pf2e-dailies-apparition-fix.Familiar.Hint"}}</p>
+        <label>{{localize "pf2e-dailies-apparition-fix.Familiar.Apparition"}}
+            <select name="familiarApparition"><option value="">—</option>
+            {{#each familiar.options}}<option value="{{this.key}}" {{#if this.selected}}selected{{/if}}>{{this.name}}</option>{{/each}}
+            </select>
+        </label>
+        <label>{{localize "pf2e-dailies-apparition-fix.Familiar.Actor"}}
+            <select name="spiritFamiliarActor"><option value="">{{localize "pf2e-dailies-apparition-fix.Familiar.NoActor"}}</option>
+            {{#each familiar.actors}}<option value="{{this.uuid}}" {{#if this.selected}}selected{{/if}}>{{this.name}}</option>{{/each}}
+            </select>
+        </label>
+        <button type="button" data-action="set-spirit-familiar">{{localize "pf2e-dailies-apparition-fix.Familiar.Link"}}</button>
+        {{#if familiar.key}}
+        <p class="hint">{{#if familiar.destroyed}}{{localize "pf2e-dailies-apparition-fix.Familiar.Destroyed"}}{{else}}{{localize "pf2e-dailies-apparition-fix.Familiar.Active"}}{{/if}}</p>
+        <button type="button" data-action="destroy-spirit-familiar">{{localize "pf2e-dailies-apparition-fix.Familiar.MarkDestroyed"}}</button>
+        <button type="button" data-action="remanifest-spirit-familiar">{{localize "pf2e-dailies-apparition-fix.Familiar.Remanifest"}}</button>
+        {{/if}}
+    </fieldset>
+    {{/if}}
+
+    {{#if wanderingLoading}}<p class="am-notice" role="status">{{localize "pf2e-dailies-apparition-fix.ManagerUI.LoadingWandering"}}</p>{{/if}}
+    {{#if wanderingError}}<div class="am-notice am-warning" role="status">{{localize "pf2e-dailies-apparition-fix.ManagerUI.WanderingError"}} <button type="button" data-action="retry-wandering">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Retry"}}</button></div>{{/if}}
+    {{#unless wanderingLoading}}
     {{#if wandering.show}}
     <fieldset class="apparition-fix-wandering">
         <legend>{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Wandering.Title"}}</legend>
@@ -237,7 +99,7 @@
             <li data-feat-id="{{this.id}}" class="{{#if this.requirementUnmet}}unmet{{/if}}">
                 <div class="wandering-current">
                     <img src="{{this.img}}" alt="" />
-                    <a class="name" data-action="open-wandering-source" data-uuid="{{this.sourceUuid}}" data-item-id="{{this.id}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Wandering.OpenOriginal'}}">{{this.name}}</a>
+                    <button type="button" class="name" data-action="open-wandering-source" data-uuid="{{this.sourceUuid}}" data-item-id="{{this.id}}" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Wandering.OpenOriginal'}}">{{this.name}}</button>
                     <span class="level">{{this.levelLabel}}</span>
                     {{#if this.requirementUnmet}}
                     <span class="apparition-fix-requirement-warning" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Wandering.RequirementUnmetHint'}}"><i class="fa-solid fa-triangle-exclamation"></i> {{localize "pf2e-dailies-apparition-fix.ManageApparitions.Wandering.RequirementUnmet"}}</span>
@@ -257,12 +119,12 @@
                     {{/if}}
                 </div>
                 <div class="wandering-retrain">
-                    <select name="wandering-{{this.id}}" {{#unless this.hasChoice}}disabled{{/unless}}>
+                    <select aria-label="{{this.name}}" name="wandering-{{this.id}}" {{#unless this.hasChoice}}disabled{{/unless}}>
                         {{#each this.options}}
                         <option value="{{this.uuid}}" data-requirement="{{this.requirement}}" data-met="{{this.met}}" {{#if this.selected}}selected{{/if}} {{#if this.disabled}}disabled{{/if}}>{{this.label}}</option>
                         {{/each}}
                     </select>
-                    <a data-action="open-wandering-source" data-select="wandering-{{this.id}}" data-item-id="{{this.id}}" role="button" tabindex="0" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Wandering.OpenOriginal'}}"><i class="fa-solid fa-book-open"></i></a>
+                    <button type="button" data-action="open-wandering-source" data-select="wandering-{{this.id}}" data-item-id="{{this.id}}" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.Wandering.OpenOriginal'}}">↗</button>
                     <button type="button" data-action="replace-wandering" data-feat-id="{{this.id}}" {{#unless this.hasChoice}}disabled{{/unless}}>
                         <i class="fa-solid fa-rotate"></i> {{localize "pf2e-dailies-apparition-fix.ManageApparitions.Wandering.Replace"}}
                     </button>
@@ -276,18 +138,20 @@
     </fieldset>
     {{/if}}
 
-    <footer class="form-footer apparition-fix-editor-footer">
-        <button type="button" data-action="diagnose">
-            <i class="fa-solid fa-stethoscope"></i>
-            {{localize "pf2e-dailies-apparition-fix.Diagnostics.Open"}}
-        </button>
-        <button type="button" data-action="cleanup-vessels" title="{{localize 'pf2e-dailies-apparition-fix.ManageApparitions.CleanupVesselsHint'}}">
-            <i class="fa-solid fa-broom"></i>
-            {{localize "pf2e-dailies-apparition-fix.ManageApparitions.CleanupVessels"}}
-        </button>
-        <button type="button" data-action="closeWindow">
-            <i class="fa-solid fa-xmark"></i>
-            {{localize "pf2e-dailies-apparition-fix.ManageApparitions.Close"}}
-        </button>
-    </footer>
+
+{{/unless}}
+</section>
+ <section class="am-profiles am-scroll" data-scroll-key="profiles" data-manager-panel="profiles" id="{{instanceId}}-panel-profiles" role="tabpanel" aria-labelledby="{{instanceId}}-tab-profiles" {{#unless tabProfiles}}hidden{{/unless}}>
+ <h3>{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.Legend"}}</h3><p class="am-muted">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.Hint"}}</p>
+ <div class="am-profile-fields"><label>{{localize "pf2e-dailies-apparition-fix.ManagerUI.SelectedProfile"}}<select name="profileId"><option value="">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.Select"}}</option>{{#each profiles}}<option value="{{id}}" {{#if selected}}selected{{/if}}>{{label}}</option>{{/each}}</select></label><label>{{localize "pf2e-dailies-apparition-fix.ManagerUI.ProfileName"}}<input type="text" name="profileName" placeholder="{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.NamePlaceholder"}}"></label></div>
+ <div class="am-actions"><button type="button" data-action="save-profile">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.Save"}}</button><button type="button" class="am-accent" data-action="apply-profile" {{#unless selectedProfile}}disabled{{/unless}}>{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.Apply"}}</button><button type="button" data-action="delete-profile" {{#unless selectedProfile}}disabled{{/unless}}>{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.Delete"}}</button>{{#if hasLastDaySnapshot}}<button type="button" data-action="restore-yesterday">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.RestoreYesterday"}}</button>{{/if}}</div>
+ {{#if selectedProfile}}<div class="am-profile-preview"><h4>{{localize "pf2e-dailies-apparition-fix.ManagerUI.Preview"}}</h4>{{#if profileLoading}}<p role="status">{{localize "pf2e-dailies-apparition-fix.ManagerUI.LoadingProfile"}}</p>{{/if}}{{#if profileError}}<div class="am-notice am-warning" role="status">{{localize "pf2e-dailies-apparition-fix.ManagerUI.ProfileError"}} <button type="button" data-action="retry-profile">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Retry"}}</button></div>{{/if}}
+ <ul class="am-preview-rows">{{#each previewRows}}<li><img src="{{img}}" alt=""><strong>{{name}}</strong><span class="am-muted">{{#if missing}}{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.PreviewMissing"}}{{else}}{{#if bonded}}{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.PreviewBonded"}}{{else}}{{#unless unresolved}}{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.PreviewToBind"}}{{/unless}}{{/if}}{{/if}}</span>{{#if primary}}<span class="am-badge am-primary">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Primary"}}</span>{{/if}}</li>{{else}}<li class="am-empty">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.PreviewEmpty"}}</li>{{/each}}</ul>
+ {{#if toUnbind.length}}<p class="am-notice am-warning">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.Profiles.PreviewToUnbind"}}: {{#each toUnbind}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}</p>{{/if}}</div>{{else}}<p class="am-empty">{{localize "pf2e-dailies-apparition-fix.ManagerUI.SelectProfileHint"}}</p>{{/if}}
+ </section></div>
+ <details class="am-advanced" data-ui-section="advanced"><summary>{{localize "pf2e-dailies-apparition-fix.ManagerUI.Advanced"}}</summary><div class="am-advanced-body" data-scroll-key="advanced">
+ <div class="am-profile-fields"><label>{{localize "pf2e-dailies-apparition-fix.ManagerUI.FocusOverride"}}<input type="number" name="focusOverrideInput" min="0"  value="{{focusOverride}}"></label><div class="am-actions"><button type="button" data-action="set-focus-override">{{localize "pf2e-dailies-apparition-fix.ManagerUI.Set"}}</button><button type="button" data-action="clear-focus-override" {{#unless hasFocusOverride}}disabled{{/unless}}>{{localize "pf2e-dailies-apparition-fix.ManagerUI.Reset"}}</button></div></div>
+ <p class="am-muted">{{localize "pf2e-dailies-apparition-fix.ManagerUI.FocusHint"}}</p>
+ {{#if isGM}}<div class="am-actions"><span>{{localize "pf2e-dailies-apparition-fix.ManageApparitions.AutoPrimary.Label"}}: {{#if autoPrimary}}{{localize "pf2e-dailies-apparition-fix.ManageApparitions.AutoPrimary.On"}}{{else}}{{localize "pf2e-dailies-apparition-fix.ManageApparitions.AutoPrimary.Off"}}{{/if}}</span><button type="button" data-action="toggle-auto-primary">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.AutoPrimary.Toggle"}}</button></div>{{/if}}
+ <div class="am-actions"><button type="button" data-action="diagnose">{{localize "pf2e-dailies-apparition-fix.Diagnostics.Open"}}</button><button type="button" data-action="cleanup-vessels" title="{{localize "pf2e-dailies-apparition-fix.ManageApparitions.CleanupVesselsHint"}}">{{localize "pf2e-dailies-apparition-fix.ManageApparitions.CleanupVessels"}}</button></div></div></details>
 </div>

@@ -822,3 +822,18 @@ button.cast-spell.apparition-fix-inactive,
 .apparition-fix-permanent-pin {
     opacity: 0.8;
 }
+
+/* Presentation only: native PF2e signature documents stay intact. */
+.spell[data-apparition-fix-virtual="true"] {
+    display: none !important;
+}
+.apparition-fix-spirit-familiar label {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-block: 0.3rem;
+}
+.apparition-fix-spirit-familiar select {
+    flex: 1;
+    min-width: 0;
+}

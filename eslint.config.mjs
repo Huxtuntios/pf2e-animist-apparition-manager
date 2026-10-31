@@ -12,7 +12,7 @@ export default [
     { ignores: ["node_modules/", "dist/"] },
     js.configs.recommended,
     {
-        files: ["scripts/**/*.mjs"],
+        files: ["scripts/**/*.mjs", "tests/**/*.mjs"],
         languageOptions: { ecmaVersion: 2023, sourceType: "module", globals: { ...globals.browser, ...foundry } },
         rules: {
             "no-unused-vars": ["warn", { args: "none", caughtErrors: "none", ignoreRestSiblings: true }],
