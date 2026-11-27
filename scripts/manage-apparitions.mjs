@@ -283,7 +283,7 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
     }
     reportPerformance() {
         return {
-            version: "1.3.3",
+            version: "1.3.4",
             foundry: game.version,
             system: game.system.version,
             firstRenderMs: this.metrics.firstRenderMs,
