@@ -549,6 +549,486 @@ await test("import custom apparition preserves full Vessel damage but normalizes
     equal(v.system.damage.main.formula, "2d6");
     equal(core.parseApparitionLores(item), ["Forest Lore"]);
 });
+await test("custom import preserves an existing Vessel UUID without creating a duplicate Spell", async () => {
+    const vessel = doc({
+        type: "spell",
+        name: "Original Focus",
+        system: { level: { value: 2 }, traits: { value: ["focus", "animist"] }, rules: [], damage: { main: { formula: "2d6" } } },
+    });
+    documents.set(vessel.uuid, vessel);
+    game.items.push(vessel);
+    const before = game.items.length;
+    const spellsBefore = game.items.filter((entry) => entry.type === "spell").length;
+    const item = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Referenced",
+        lores: [],
+        spells: [],
+        vessel: { uuid: vessel.uuid, name: vessel.name, source: vessel.toObject() },
+    });
+    assert(item);
+    equal(core.parseApparitionVesselUuid(item), vessel.uuid);
+    equal(game.items.length, before + 1);
+    equal(game.items.filter((entry) => entry.type === "spell").length, spellsBefore);
+});
+await test("custom import keeps an unresolved Vessel reference instead of creating a fallback", async () => {
+    const before = game.items.length;
+    const item = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Unresolved",
+        lores: [],
+        spells: [],
+        vessel: {
+            uuid: "Broken.vessel",
+            name: "Missing Vessel",
+            source: { type: "spell", system: { level: { value: 1 }, traits: { value: ["focus"] } } },
+        },
+    });
+    assert(item);
+    equal(core.parseApparitionVesselUuid(item), "Broken.vessel");
+    equal(game.items.length, before + 1);
+});
+await test("custom export stores the Vessel UUID and roundtrip reuses the original Spell", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Original",
+        lores: [],
+        spells: [],
+        vessel: { name: "Owned Vessel", rank: 2, source: { type: "spell", system: { damage: { main: { formula: "2d6" } } } } },
+    });
+    const vesselUuid = core.parseApparitionVesselUuid(original);
+    await custom.exportCustomApparition(original);
+    equal(savedFile.vessel.uuid, vesselUuid);
+    equal(savedFile.version, 5);
+    const copy = await custom.importCustomApparitionData(savedFile);
+    assert(copy && copy.id !== original.id);
+    equal(core.parseApparitionVesselUuid(copy), vesselUuid);
+});
+await test("copy seed retains the original Vessel UUID as a read-only reference", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Original",
+        lores: [],
+        spells: [],
+        vessel: { name: "Owned Vessel", source: { type: "spell", system: {} } },
+    });
+    const vesselUuid = core.parseApparitionVesselUuid(original);
+    const seed = await custom.extractEditorSeed(original);
+    equal(seed.vessel.uuid, vesselUuid);
+    equal(seed.vessel.isReference, true);
+});
+await test("editing a copied apparition does not modify the shared Vessel Spell", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Original",
+        lores: [],
+        spells: [],
+        vessel: { name: "Shared Vessel", rank: 2, source: { type: "spell", system: {} } },
+    });
+    const vessel = await fromUuid(core.parseApparitionVesselUuid(original));
+    const copy = doc({
+        type: "feat",
+        name: "Copy",
+        flags: { [ID]: { customApparition: true } },
+        system: { description: { value: `<ul></ul><p>@UUID[${vessel.uuid}]{${vessel.name}}</p>` } },
+    });
+    game.items.push(copy);
+    documents.set(copy.uuid, copy);
+    await custom.saveCustomApparition({
+        existingItem: copy,
+        name: "Copy Edited",
+        img: copy.img,
+        flavor: "",
+        lores: [],
+        spells: [],
+        vessel: {
+            uuid: vessel.uuid,
+            isReference: true,
+            name: "Changed Name",
+            rank: 9,
+            actions: "1",
+            range: "",
+            target: "",
+            duration: "",
+            description: "",
+            extraTraits: [],
+        },
+    });
+    equal(vessel.name, "Shared Vessel");
+    equal(vessel.system.level.value, 2);
+});
+await test("deleting a copied apparition never deletes the shared Vessel Spell", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Original",
+        lores: [],
+        spells: [],
+        vessel: { name: "Shared Vessel", source: { type: "spell", system: {} } },
+    });
+    const vessel = await fromUuid(core.parseApparitionVesselUuid(original));
+    const copy = doc({
+        type: "feat",
+        name: "Copy",
+        flags: { [ID]: { customApparition: true } },
+        system: { description: { value: `<ul></ul><p>@UUID[${vessel.uuid}]{${vessel.name}}</p>` } },
+    });
+    game.items.push(copy);
+    documents.set(copy.uuid, copy);
+    await custom.deleteCustomApparition(copy);
+    assert(game.items.includes(vessel));
+});
+await test("deleting the original apparition keeps a Vessel still referenced by a copy", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Original",
+        lores: [],
+        spells: [],
+        vessel: { name: "Shared Vessel", source: { type: "spell", system: {} } },
+    });
+    const vessel = await fromUuid(core.parseApparitionVesselUuid(original));
+    const copy = doc({
+        type: "feat",
+        name: "Copy",
+        flags: { [ID]: { customApparition: true } },
+        system: { description: { value: `<ul></ul><p>@UUID[${vessel.uuid}]{${vessel.name}}</p>` } },
+    });
+    game.items.push(copy);
+    documents.set(copy.uuid, copy);
+    await custom.deleteCustomApparition(original);
+    assert(game.items.includes(vessel));
+    await custom.deleteCustomApparition(copy);
+    assert(!game.items.includes(vessel));
+});
+await test("saving an authored Vessel deleted after editor load preserves its UUID", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Deleted Owned Vessel",
+        lores: [],
+        spells: [],
+        vessel: { name: "Owned Vessel", source: { type: "spell", system: {} } },
+    });
+    const vesselUuid = core.parseApparitionVesselUuid(original);
+    const vessel = await fromUuid(vesselUuid);
+    await vessel.delete();
+    const spellsBefore = game.items.filter((item) => item.type === "spell").length;
+    const saved = await custom.saveCustomApparition({
+        existingItem: original,
+        name: original.name,
+        img: original.img,
+        flavor: "",
+        lores: [],
+        spells: [],
+        vessel: {
+            uuid: vesselUuid,
+            isReference: false,
+            name: vessel.name,
+            rank: 1,
+            actions: "1",
+            range: "",
+            target: "",
+            duration: "",
+            description: "",
+            extraTraits: [],
+        },
+    });
+    assert(saved);
+    equal(core.parseApparitionVesselUuid(saved), vesselUuid);
+    equal(game.items.filter((item) => item.type === "spell").length, spellsBefore);
+});
+await test("switching an owned Vessel removes the old unreferenced Spell", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Switch Vessel",
+        lores: [],
+        spells: [],
+        vessel: { name: "Old Owned Vessel", source: { type: "spell", system: {} } },
+    });
+    const oldVessel = await fromUuid(core.parseApparitionVesselUuid(original));
+    const replacement = doc({
+        type: "spell",
+        name: "Replacement Focus",
+        system: { level: { value: 1 }, traits: { value: ["focus"] } },
+    });
+    game.items.push(replacement);
+    documents.set(replacement.uuid, replacement);
+    await custom.saveCustomApparition({
+        existingItem: original,
+        name: original.name,
+        img: original.img,
+        flavor: "",
+        lores: [],
+        spells: [],
+        vessel: {
+            uuid: replacement.uuid,
+            isReference: true,
+            name: replacement.name,
+            rank: 1,
+            actions: "1",
+            range: "",
+            target: "",
+            duration: "",
+            description: "",
+            extraTraits: [],
+        },
+    });
+    equal(core.parseApparitionVesselUuid(original), replacement.uuid);
+    assert(!game.items.includes(oldVessel));
+    assert(game.items.includes(replacement));
+});
+await test("concurrent copy save completes before shared Vessel cleanup", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Concurrent Original",
+        lores: [],
+        spells: [],
+        vessel: { name: "Concurrent Vessel", source: { type: "spell", system: {} } },
+    });
+    const vessel = await fromUuid(core.parseApparitionVesselUuid(original));
+    const save = custom.saveCustomApparition({
+        existingItem: null,
+        name: "Concurrent Copy",
+        img: original.img,
+        flavor: "",
+        lores: [],
+        spells: [],
+        vessel: {
+            uuid: vessel.uuid,
+            isReference: true,
+            name: vessel.name,
+            rank: 1,
+            actions: "1",
+            range: "",
+            target: "",
+            duration: "",
+            description: "",
+            extraTraits: [],
+        },
+    });
+    const remove = custom.deleteCustomApparition(original);
+    const [copy] = await Promise.all([save, remove]);
+    assert(copy);
+    equal(core.parseApparitionVesselUuid(copy), vessel.uuid);
+    assert(game.items.includes(vessel));
+});
+await test("focus spell choices include world actor and compendium sources and filter by text", async () => {
+    const worldFocus = doc({ type: "spell", name: "World Focus", system: { level: { value: 1 }, traits: { value: ["focus"] } } });
+    const worldOther = doc({ type: "spell", name: "World Other", system: { level: { value: 1 }, traits: { value: [] } } });
+    const worldFocusCantrip = doc({
+        type: "spell",
+        name: "World Focus Cantrip",
+        system: { level: { value: 0 }, traits: { value: ["cantrip"], traditions: [] } },
+    });
+    game.items.push(worldFocus, worldOther, worldFocusCantrip);
+    const actorDoc = actor();
+    const actorFocus = add(actorDoc, { type: "spell", name: "Actor Focus", system: { level: { value: 1 }, traits: { value: ["focus"] } } });
+    game.actors.push(actorDoc);
+    let indexedFields;
+    game.packs.set("pf2e.spells-srd", {
+        metadata: { type: "Item", system: "pf2e", packageName: "pf2e", label: "Spells" },
+        getIndex: async ({ fields }) => {
+            indexedFields = fields;
+            return [
+                {
+                    _id: "comp",
+                    uuid: "Compendium.pf2e.spells-srd.Item.comp",
+                    name: "Compendium Focus",
+                    type: "spell",
+                    img: "",
+                    system: { level: { value: 2 }, traits: { value: ["focus"] } },
+                },
+            ];
+        },
+    });
+    const choices = await custom.loadFocusSpellChoices();
+    assert(choices.some((choice) => choice.uuid === worldFocus.uuid));
+    assert(choices.some((choice) => choice.uuid === worldFocusCantrip.uuid));
+    assert(choices.some((choice) => choice.uuid === actorFocus.uuid && choice.source === actorDoc.name));
+    assert(choices.some((choice) => choice.uuid === "Compendium.pf2e.spells-srd.Item.comp" && choice.source === "Spells"));
+    assert(!choices.some((choice) => choice.uuid === worldOther.uuid));
+    assert(indexedFields.includes("system.traits.traditions"));
+    equal(
+        custom.filterFocusSpellChoices(choices, "compendium focus").map((choice) => choice.uuid),
+        ["Compendium.pf2e.spells-srd.Item.comp"],
+    );
+});
+await test("editing an apparition with an unresolved Vessel reference preserves the UUID", async () => {
+    const item = doc({
+        type: "feat",
+        name: "Broken Reference",
+        flags: { [ID]: { customApparition: true } },
+        system: { description: { value: "<ul></ul><p>@UUID[Broken.vessel]{Missing Vessel}</p>" } },
+    });
+    game.items.push(item);
+    documents.set(item.uuid, item);
+    const saved = await custom.saveCustomApparition({
+        existingItem: item,
+        name: "Broken Reference Edited",
+        img: item.img,
+        flavor: "",
+        lores: [],
+        spells: [],
+        vessel: {
+            uuid: "Broken.vessel",
+            isReference: true,
+            name: "Missing Vessel",
+            rank: 1,
+            actions: "1",
+            range: "",
+            target: "",
+            duration: "",
+            description: "",
+            extraTraits: [],
+        },
+    });
+    assert(saved);
+    equal(core.parseApparitionVesselUuid(saved), "Broken.vessel");
+});
+await test("exporting an apparition with an unresolved Vessel reference keeps its UUID", async () => {
+    const item = doc({
+        type: "feat",
+        name: "Broken Export",
+        flags: { [ID]: { customApparition: true } },
+        system: { description: { value: "<ul></ul><p>@UUID[Broken.vessel]{Missing Vessel}</p>" } },
+    });
+    game.items.push(item);
+    documents.set(item.uuid, item);
+    await custom.exportCustomApparition(item);
+    equal(savedFile.vessel.uuid, "Broken.vessel");
+});
+await test("focus spell picker filters choices by the current search text", async () => {
+    const app = new custom.FocusSpellPickerApp(() => {});
+    app.choices = [
+        { uuid: "Item.alpha", name: "Alpha", source: "World", rank: 1, traits: ["focus"] },
+        { uuid: "Item.beta", name: "Beta", source: "Spells", rank: 2, traits: ["focus", "healing"] },
+    ];
+    app.search = "beta";
+    const context = await app._prepareContext({});
+    equal(
+        context.choices.map((choice) => choice.uuid),
+        ["Item.beta"],
+    );
+});
+await test("focus spell picker renders loading state before slow packs finish", async () => {
+    const invalidate = () => {
+        for (const callback of callbacks.get("createItem") ?? []) if (callback.name === "invalidateFocusSpellChoices") callback();
+    };
+    invalidate();
+    let release;
+    game.packs.set("pf2e.slow-spells", {
+        metadata: { type: "Item", system: "pf2e", packageName: "pf2e", label: "Slow Spells" },
+        getIndex: () => new Promise((resolve) => (release = resolve)),
+    });
+    const app = new custom.FocusSpellPickerApp(() => {});
+    try {
+        const context = await Promise.race([app._prepareContext({}), new Promise((resolve) => setTimeout(() => resolve("timeout"), 50))]);
+        equal(context.loading, true);
+    } finally {
+        release?.([]);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        game.packs.delete("pf2e.slow-spells");
+        invalidate();
+    }
+});
+await test("focus spell picker search filters rows without rerendering or losing focus", async () => {
+    const app = new custom.FocusSpellPickerApp(() => {});
+    app.choices = [
+        { uuid: "Item.alpha", name: "Alpha", source: "World", rank: 1, traits: ["focus"] },
+        { uuid: "Item.beta", name: "Beta", source: "Spells", rank: 2, traits: ["focus", "healing"] },
+    ];
+    const root = document.createElement("div");
+    root.innerHTML = `<input data-role="focus-spell-search"><ol><li><button data-action="select-focus-spell" data-uuid="Item.alpha">Alpha</button></li><li><button data-action="select-focus-spell" data-uuid="Item.beta">Beta</button></li></ol><li class="empty" data-role="focus-spell-empty" hidden></li>`;
+    document.body.append(root);
+    let renders = 0;
+    app.render = () => {
+        renders++;
+        return app;
+    };
+    app._attachPartListeners("picker", root);
+    const input = root.querySelector("[data-role='focus-spell-search']");
+    input.focus();
+    input.value = "beta";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    equal(renders, 0);
+    equal(root.querySelector('[data-uuid="Item.alpha"]').closest("li").hidden, true);
+    equal(root.querySelector('[data-uuid="Item.beta"]').closest("li").hidden, false);
+    equal(document.activeElement, input);
+    input.value = "missing";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    equal(root.querySelector("[data-role='focus-spell-empty']").hidden, false);
+    root.remove();
+});
+await test("focus spell picker shows UUIDs for duplicate names", async () => {
+    globalThis.Handlebars.registerHelper("localize", (key) => key);
+    const template = globalThis.Handlebars.compile(await (await fetch("../templates/custom-apparitions/focus-spell-picker.hbs")).text());
+    const app = new custom.FocusSpellPickerApp(() => {});
+    app.choices = [
+        { uuid: "Item.alpha", name: "Duplicate", source: "World", rank: 1, traits: ["focus"] },
+        { uuid: "Item.beta", name: "Duplicate", source: "World", rank: 1, traits: ["focus"] },
+    ];
+    const context = await app._prepareContext({});
+    equal(
+        context.choices.map((choice) => choice.duplicateName),
+        [true, true],
+    );
+    const root = document.createElement("div");
+    root.innerHTML = template(context);
+    equal(
+        [...root.querySelectorAll(".uuid")].map((element) => element.textContent.trim()),
+        ["Item.alpha", "Item.beta"],
+    );
+});
+await test("custom editor renders referenced Vessels read-only and authored Vessels editable", async () => {
+    globalThis.Handlebars.registerHelper("localize", (key) => key);
+    const template = globalThis.Handlebars.compile(await (await fetch("../templates/custom-apparitions/editor.hbs")).text());
+    const referenced = new custom.CustomApparitionEditorApp(null, {
+        seed: {
+            name: "Referenced",
+            vessel: {
+                uuid: "Item.vessel",
+                isReference: true,
+                name: "Shared Vessel",
+                img: "",
+                rank: 1,
+                actions: "1",
+                range: "",
+                target: "",
+                duration: "",
+                description: "",
+                extraTraits: [],
+            },
+        },
+    });
+    referenced.step = 2;
+    const referenceContext = await referenced._prepareContext({});
+    const referenceRoot = document.createElement("div");
+    referenceRoot.innerHTML = template(referenceContext);
+    assert(referenceRoot.querySelector('[data-action="useAuthoredVessel"]'));
+    assert(!referenceRoot.querySelector('[name="vesselName"]'));
+
+    const authored = new custom.CustomApparitionEditorApp(null, {
+        seed: { name: "Authored", vessel: { name: "Owned Vessel", isReference: false, extraTraits: [] } },
+    });
+    authored.step = 2;
+    const authoredContext = await authored._prepareContext({});
+    const authoredRoot = document.createElement("div");
+    authoredRoot.innerHTML = template(authoredContext);
+    assert(authoredRoot.querySelector('[data-action="selectExistingVessel"]'));
+    assert(authoredRoot.querySelector('[name="vesselName"]'));
+});
+await test("custom import rejects an invalid Vessel UUID before writing documents", async () => {
+    const count = game.items.length;
+    equal(
+        await custom.importCustomApparitionData({
+            format: "pf2e-dailies-apparition-fix-custom-apparition",
+            name: "Invalid UUID",
+            lores: [],
+            spells: [],
+            vessel: { uuid: "Bad]uuid", name: "Invalid" },
+        }),
+        null,
+    );
+    equal(game.items.length, count);
+});
 await test("custom import rejects wrong format without writes", async () => {
     const count = game.items.length;
     equal(await custom.importCustomApparitionData({ format: "wrong" }), null);

@@ -76,6 +76,107 @@ function spellToRow(doc) {
     };
 }
 
+function getSpellDescriptionText(doc) {
+    const container = document.createElement("div");
+    container.innerHTML = doc?.description ?? doc?.system?.description?.value ?? "";
+    return Array.from(container.querySelectorAll("p"))
+        .map((paragraph) => paragraph.textContent?.trim() ?? "")
+        .filter(Boolean)
+        .join("\n");
+}
+
+function isFocusSpellDocument(doc) {
+    const traits = doc?.system?.traits;
+    const values = traits?.value ?? [];
+    return doc?.type === "spell" && (values.includes("focus") || (values.includes("cantrip") && traits?.traditions?.length === 0));
+}
+
+function buildVesselStateFromSpell(doc, { isReference = true } = {}) {
+    return {
+        uuid: doc.uuid,
+        name: doc.name,
+        img: doc.img || DEFAULT_VESSEL_IMG,
+        rank: doc.system?.level?.value ?? 1,
+        actions: doc.system?.time?.value ?? "1",
+        range: doc.system?.range?.value ?? "",
+        target: doc.system?.target?.value ?? "",
+        duration: doc.system?.duration?.value ?? "",
+        description: getSpellDescriptionText(doc),
+        extraTraits: (doc.system?.traits?.value ?? []).filter((trait) => trait !== "animist" && trait !== "focus"),
+        source: doc.toObject?.(),
+        isReference,
+    };
+}
+
+function isVesselOwnedByApparition(vesselDoc, apparitionItem) {
+    return !!(
+        vesselDoc?.isOwner &&
+        apparitionItem &&
+        vesselDoc.getFlag(MODULE_ID, "customApparitionVessel") &&
+        vesselDoc.getFlag(MODULE_ID, "customApparitionSource") === apparitionItem.uuid
+    );
+}
+
+let focusSpellChoicesPromise = null;
+
+function filterFocusSpellChoices(choices, query) {
+    const needle = String(query ?? "")
+        .trim()
+        .toLowerCase()
+        .replaceAll("ё", "е");
+    if (!needle) return choices;
+    return choices.filter((choice) =>
+        [choice.name, choice.source, ...(choice.traits ?? [])].join(" ").toLowerCase().replaceAll("ё", "е").includes(needle),
+    );
+}
+
+async function loadFocusSpellChoices() {
+    if (focusSpellChoicesPromise) return focusSpellChoicesPromise;
+    focusSpellChoicesPromise = (async () => {
+        const byUuid = new Map();
+        const add = (doc, source) => {
+            if (!isFocusSpellDocument(doc) || !doc.uuid) return;
+            const traits = doc.system?.traits?.value ?? [];
+            byUuid.set(doc.uuid, {
+                uuid: doc.uuid,
+                name: doc.name,
+                img: doc.img,
+                rank: traits.includes("cantrip") ? 0 : (doc.baseRank ?? doc.system?.level?.value ?? 1),
+                traits,
+                source,
+                actions: doc.system?.time?.value ?? "",
+            });
+        };
+        for (const item of game.items) add(item, game.i18n.localize(`${MODULE_ID}.CustomApparition.SourceWorld`));
+        for (const actor of game.actors) for (const item of actor.items) add(item, actor.name);
+        const packs = [...game.packs.values()].filter(
+            (pack) =>
+                pack.metadata?.type === "Item" &&
+                (pack.metadata?.system === game.system.id || pack.metadata?.packageName === game.system.id),
+        );
+        await Promise.all(
+            packs.map(async (pack) => {
+                try {
+                    const index = await pack.getIndex({
+                        fields: ["type", "system.traits.value", "system.traits.traditions", "system.level.value", "system.time.value"],
+                    });
+                    for (const row of Array.from(index.values?.() ?? index)) add(row, pack.metadata.label ?? pack.metadata.name);
+                } catch (error) {
+                    console.warn(`${MODULE_ID} | Failed to index focus spell pack ${pack.collection}`, error);
+                }
+            }),
+        );
+        return [...byUuid.values()].sort(
+            (a, b) => a.name.localeCompare(b.name, game.i18n.lang) || a.rank - b.rank || a.source.localeCompare(b.source),
+        );
+    })();
+    return focusSpellChoicesPromise;
+}
+
+function invalidateFocusSpellChoices() {
+    focusSpellChoicesPromise = null;
+}
+
 /**
  * Every trait PF2e itself considers valid on a spell (`CONFIG.PF2E.spellTraits`
  * - the same list the system's own spell sheet offers), minus "animist" and
@@ -132,14 +233,7 @@ async function extractEditorSeed(apparitionItem, { copyName = true } = {}) {
     const spellUuids = parseApparitionSpellUuids(apparitionItem);
     const spellDocs = await Promise.all(spellUuids.map((uuid) => fromUuid(uuid)));
     const vesselUuid = parseApparitionVesselUuid(apparitionItem);
-    const vesselDoc = vesselUuid ? await fromUuid(vesselUuid) : null;
-    const description = vesselDoc?.description ?? vesselDoc?.system?.description?.value ?? "";
-    const container = document.createElement("div");
-    container.innerHTML = description;
-    const vesselDescription = Array.from(container.querySelectorAll("p"))
-        .map((p) => p.textContent?.trim() ?? "")
-        .filter(Boolean)
-        .join("\n");
+    const vesselDoc = vesselUuid ? await fromUuid(vesselUuid).catch(() => null) : null;
     const seed = {
         name: copyName ? `${apparitionItem.name} (${game.i18n.localize(`${MODULE_ID}.CustomApparition.CopySuffix`)})` : apparitionItem.name,
         img: apparitionItem.img || DEFAULT_APPARITION_IMG,
@@ -150,20 +244,10 @@ async function extractEditorSeed(apparitionItem, { copyName = true } = {}) {
             .filter((doc) => doc?.isOfType?.("spell"))
             .map((doc) => ({ ...spellToRow(doc), source: doc.toObject?.() ?? null })),
         vessel: vesselDoc?.isOfType?.("spell")
-            ? {
-                  name: vesselDoc.name,
-                  img: vesselDoc.img || DEFAULT_VESSEL_IMG,
-                  rank: vesselDoc.system?.level?.value ?? 1,
-                  actions: vesselDoc.system?.time?.value ?? "1",
-                  range: vesselDoc.system?.range?.value ?? "",
-                  target: vesselDoc.system?.target?.value ?? "",
-                  duration: vesselDoc.system?.duration?.value ?? "",
-                  description: vesselDescription,
-                  extraTraits: (vesselDoc.system?.traits?.value ?? []).filter((trait) => trait !== "animist" && trait !== "focus"),
-                  source: vesselDoc.toObject(),
-              }
+            ? buildVesselStateFromSpell(vesselDoc, { isReference: true })
             : {
-                  name: `${apparitionItem.name} ${game.i18n.localize(`${MODULE_ID}.CustomApparition.Vessel`)}`,
+                  uuid: vesselUuid,
+                  name: vesselUuid ?? `${apparitionItem.name} ${game.i18n.localize(`${MODULE_ID}.CustomApparition.Vessel`)}`,
                   img: DEFAULT_VESSEL_IMG,
                   rank: 1,
                   actions: "1",
@@ -173,6 +257,8 @@ async function extractEditorSeed(apparitionItem, { copyName = true } = {}) {
                   description: "",
                   extraTraits: [],
                   source: null,
+                  isReference: !!vesselUuid,
+                  unresolved: !!vesselUuid,
               },
     };
     return seed;
@@ -341,6 +427,27 @@ function buildNewVesselSpellSource(vessel) {
     return foundry.utils.mergeObject(base, buildVesselSpellFields(vessel), { inplace: false });
 }
 
+// Same-client saves and deletes must not race while cleaning a shared Vessel.
+const vesselOperationQueues = new Map();
+
+function queueVesselOperation(uuid, operation) {
+    const key = uuid || foundry.utils.randomID();
+    const previous = vesselOperationQueues.get(key) ?? Promise.resolve();
+    const current = previous.catch(() => {}).then(operation);
+    vesselOperationQueues.set(key, current);
+    return current.finally(() => {
+        if (vesselOperationQueues.get(key) === current) vesselOperationQueues.delete(key);
+    });
+}
+
+async function deleteOwnedVesselIfUnreferenced(vesselItem, apparitionItem) {
+    if (!vesselItem?.isOwner || !vesselItem.getFlag(MODULE_ID, "customApparitionVessel")) return;
+    const referencedElsewhere = game.items.some(
+        (item) => item.id !== apparitionItem.id && item.type === "feat" && parseApparitionVesselUuid(item) === vesselItem.uuid,
+    );
+    if (!referencedElsewhere) await vesselItem.delete();
+}
+
 /**
  * Create or update a custom apparition (and its Vessel spell).
  *
@@ -354,7 +461,7 @@ function buildNewVesselSpellSource(vessel) {
  * @param {object} data.vessel See `buildVesselSpellSource`.
  * @returns {Promise<Item>} The apparition feat item.
  */
-async function saveCustomApparition({ existingItem, name, img, flavor, lores, spells, vessel, sourceUuid = null, avatarUuid = "" }) {
+async function saveCustomApparitionNow({ existingItem, name, img, flavor, lores, spells, vessel, sourceUuid = null, avatarUuid = "" }) {
     if (!game.user.isGM) {
         ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.CustomApparition.Notify.NotGM`));
         return null;
@@ -364,26 +471,39 @@ async function saveCustomApparition({ existingItem, name, img, flavor, lores, sp
         const vesselsFolder = await getVesselsFolder();
         const apparitionsFolder = await getApparitionsFolder();
 
-        // Create or update the vessel spell - always this apparition's own,
-        // never shared with another apparition.
         const existingVesselUuid = existingItem ? parseApparitionVesselUuid(existingItem) : null;
-        const existingVesselItem = existingVesselUuid ? await fromUuid(existingVesselUuid) : null;
-        const isExistingVessel = existingVesselItem?.isOwner && existingVesselItem.getFlag(MODULE_ID, "customApparitionVessel");
+        const existingVesselItem = existingVesselUuid ? await fromUuid(existingVesselUuid).catch(() => null) : null;
+        const isExistingVessel = isVesselOwnedByApparition(existingVesselItem, existingItem);
 
-        let vesselItem;
-        if (isExistingVessel) {
+        let vesselItem = null;
+        let vesselReference = null;
+        if (vessel.isReference && vessel.uuid) {
+            const referenced = await fromUuid(vessel.uuid).catch(() => null);
+            if (referenced?.isOfType?.("spell")) vesselItem = referenced;
+            else {
+                vesselReference = { uuid: vessel.uuid, name: vessel.name || vessel.uuid };
+                ui.notifications.warn(
+                    formatLocalized(`${MODULE_ID}.CustomApparition.Notify.UnresolvedVessel`, { name: vesselReference.name }),
+                );
+            }
+        } else if (isExistingVessel) {
             await existingVesselItem.update(buildVesselSpellFields(vessel, existingVesselItem));
             vesselItem = existingVesselItem;
+        } else if (vessel.uuid) {
+            vesselReference = { uuid: vessel.uuid, name: vessel.name || vessel.uuid };
+            ui.notifications.warn(formatLocalized(`${MODULE_ID}.CustomApparition.Notify.UnresolvedVessel`, { name: vesselReference.name }));
         } else {
             const vesselSource = buildNewVesselSpellSource(vessel);
             [vesselItem] = await Item.createDocuments([{ ...vesselSource, folder: vesselsFolder?.id ?? null }]);
         }
+        const vesselSummary = vesselItem ?? vesselReference;
+        if (!vesselSummary?.uuid) throw new Error("The Vessel spell reference has no UUID");
 
         const descriptionHtml = buildApparitionDescriptionHtml({
             flavor,
             lores,
             spells,
-            vessel: { uuid: vesselItem.uuid, name: vesselItem.name },
+            vessel: { uuid: vesselSummary.uuid, name: vesselSummary.name },
         });
 
         const apparitionSource = {
@@ -421,11 +541,21 @@ async function saveCustomApparition({ existingItem, name, img, flavor, lores, sp
 
         await apparitionItem.unsetFlag(MODULE_ID, LEGACY_CUSTOM_APPARITION_AVATAR_FLAG);
 
-        await vesselItem.update({
-            [`flags.${MODULE_ID}.customApparitionSource`]: apparitionItem.uuid,
-            [`flags.${MODULE_ID}.origin`]: { type: "custom-apparition", apparitionUuid: apparitionItem.uuid, grant: "vessel" },
-        });
-        await apparitionItem.setFlag(MODULE_ID, "origin", { type: "custom-apparition", vesselUuid: vesselItem.uuid });
+        if (vesselItem && !vessel.isReference && vesselItem.getFlag(MODULE_ID, "customApparitionVessel")) {
+            await vesselItem.update({
+                [`flags.${MODULE_ID}.customApparitionSource`]: apparitionItem.uuid,
+                [`flags.${MODULE_ID}.origin`]: { type: "custom-apparition", apparitionUuid: apparitionItem.uuid, grant: "vessel" },
+            });
+        }
+        await apparitionItem.setFlag(MODULE_ID, "origin", { type: "custom-apparition", vesselUuid: vesselSummary.uuid });
+
+        if (
+            existingVesselItem &&
+            existingVesselUuid !== vesselSummary.uuid &&
+            isVesselOwnedByApparition(existingVesselItem, existingItem)
+        ) {
+            await deleteOwnedVesselIfUnreferenced(existingVesselItem, apparitionItem);
+        }
 
         ui.notifications.info(formatLocalized(`${MODULE_ID}.CustomApparition.Notify.Saved`, { name }));
 
@@ -436,10 +566,16 @@ async function saveCustomApparition({ existingItem, name, img, flavor, lores, sp
     }
 }
 
+async function saveCustomApparition(data) {
+    const existingVesselUuid = data.existingItem ? parseApparitionVesselUuid(data.existingItem) : null;
+    const key = existingVesselUuid || data.vessel?.uuid || foundry.utils.randomID();
+    return queueVesselOperation(key, () => saveCustomApparitionNow(data));
+}
+
 /**
  * @param {Item} apparitionItem
  */
-async function deleteCustomApparition(apparitionItem) {
+async function deleteCustomApparitionNow(apparitionItem) {
     if (!game.user.isGM) {
         ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.CustomApparition.Notify.NotGM`));
         return;
@@ -450,16 +586,17 @@ async function deleteCustomApparition(apparitionItem) {
 
         await apparitionItem.delete();
 
-        // Only clean up the vessel spell if it's actually one this feature
-        // created for this apparition - never delete something else a GM might
-        // have pointed the description at by hand.
-        const vesselItem = vesselUuid ? await fromUuid(vesselUuid) : null;
-        if (vesselItem?.isOwner && vesselItem.getFlag(MODULE_ID, "customApparitionVessel")) {
-            await vesselItem.delete();
-        }
+        // Only clean up a module-created Vessel when no other apparition still references it.
+        const vesselItem = vesselUuid ? await fromUuid(vesselUuid).catch(() => null) : null;
+        await deleteOwnedVesselIfUnreferenced(vesselItem, apparitionItem);
     } catch (error) {
         notifyOperationFailed(error);
     }
+}
+
+async function deleteCustomApparition(apparitionItem) {
+    const vesselUuid = parseApparitionVesselUuid(apparitionItem);
+    return queueVesselOperation(vesselUuid, () => deleteCustomApparitionNow(apparitionItem));
 }
 
 /* -------------------------------------------- */
@@ -485,6 +622,77 @@ function getVesselActionOptions(current) {
     ];
     if (!options.some((option) => option.value === value)) options.push({ value, label: value });
     return options.map((option) => ({ ...option, selected: option.value === value }));
+}
+
+class FocusSpellPickerApp extends apps.HandlebarsApplicationMixin(apps.ApplicationV2) {
+    static DEFAULT_OPTIONS = {
+        classes: ["apparition-fix", "apparition-fix-focus-picker"],
+        window: { icon: "fa-solid fa-wand-magic-sparkles", resizable: true },
+        position: { width: 520, height: 640 },
+    };
+    static PARTS = {
+        picker: { template: `modules/${MODULE_ID}/templates/custom-apparitions/focus-spell-picker.hbs`, scrollable: [""] },
+    };
+    constructor(onSelect = null) {
+        super({ id: `apparition-fix-focus-spell-picker-${foundry.utils.randomID()}` });
+        this.onSelect = onSelect;
+        this.search = "";
+        this.choices = [];
+        this.loading = false;
+        this.loaded = false;
+        this.error = false;
+    }
+    get title() {
+        return game.i18n.localize(`${MODULE_ID}.CustomApparition.FocusSpellPickerTitle`);
+    }
+    async #ensureChoices() {
+        if (this.loaded || this.loading) return;
+        this.loading = true;
+        this.error = false;
+        try {
+            this.choices = await loadFocusSpellChoices();
+            this.loaded = true;
+        } catch (error) {
+            console.error(`${MODULE_ID} | Failed to load focus spell choices`, error);
+            this.error = true;
+        } finally {
+            this.loading = false;
+            if (!this.closed) void this.render();
+        }
+    }
+    async _prepareContext(_options) {
+        if (!this.choices.length && !this.loaded && !this.loading) void this.#ensureChoices();
+        const filtered = filterFocusSpellChoices(this.choices, this.search);
+        const nameCounts = new Map();
+        for (const choice of filtered) nameCounts.set(choice.name, (nameCounts.get(choice.name) ?? 0) + 1);
+        const choices = filtered.map((choice) => ({
+            ...choice,
+            duplicateName: nameCounts.get(choice.name) > 1,
+            rankLabel: choice.rank === 0 ? game.i18n.localize(`${MODULE_ID}.CustomApparition.Cantrip`) : ordinalString(choice.rank),
+            traitsText: (choice.traits ?? []).join(", "),
+        }));
+        return { choices, loading: this.loading, error: this.error, search: this.search };
+    }
+    _attachPartListeners(partId, html, _options) {
+        if (partId !== "picker") return;
+        const search = html.querySelector('[data-role="focus-spell-search"]');
+        search?.addEventListener("input", () => {
+            this.search = search.value;
+            const matches = new Set(filterFocusSpellChoices(this.choices, this.search).map((choice) => choice.uuid));
+            for (const button of html.querySelectorAll("[data-action='select-focus-spell']")) {
+                button.closest("li").hidden = !matches.has(button.dataset.uuid);
+            }
+            const empty = html.querySelector("[data-role='focus-spell-empty']");
+            if (empty) empty.hidden = matches.size > 0;
+        });
+        addListenerAll(html, "[data-action='select-focus-spell']", (el) => {
+            const choice = this.choices.find((entry) => entry.uuid === el.dataset.uuid);
+            if (!choice) return;
+            this.onSelect?.(choice);
+            this.close();
+        });
+        addListenerAll(html, "[data-action='close']", () => this.close());
+    }
 }
 
 class CustomApparitionEditorApp extends apps.HandlebarsApplicationMixin(apps.ApplicationV2) {
@@ -567,27 +775,12 @@ class CustomApparitionEditorApp extends apps.HandlebarsApplicationMixin(apps.App
         this.spells = resolvedSpells.filter((doc) => doc?.isOfType?.("spell")).map(spellToRow);
 
         const vesselUuid = parseApparitionVesselUuid(item);
-        const vesselDoc = vesselUuid ? await fromUuid(vesselUuid) : null;
-        if (vesselDoc) {
-            const paragraphs = Array.from(
-                (() => {
-                    const container = document.createElement("div");
-                    container.innerHTML = vesselDoc.description ?? vesselDoc.system?.description?.value ?? "";
-                    return container.querySelectorAll("p");
-                })(),
-            );
-            this.vessel = {
-                name: vesselDoc.name,
-                img: vesselDoc.img || DEFAULT_VESSEL_IMG,
-                rank: vesselDoc.system?.level?.value ?? 1,
-                actions: vesselDoc.system?.time?.value ?? "1",
-                range: vesselDoc.system?.range?.value ?? "",
-                target: vesselDoc.system?.target?.value ?? "",
-                duration: vesselDoc.system?.duration?.value ?? "",
-                description: paragraphs.map((p) => p.textContent?.trim() ?? "").join("\n"),
-                extraTraits: (vesselDoc.system?.traits?.value ?? []).filter((trait) => trait !== "animist" && trait !== "focus"),
-            };
+        const vesselDoc = vesselUuid ? await fromUuid(vesselUuid).catch(() => null) : null;
+        if (vesselDoc?.isOfType?.("spell")) {
+            this.vessel = buildVesselStateFromSpell(vesselDoc, { isReference: !isVesselOwnedByApparition(vesselDoc, item) });
             this.vesselDescriptionOriginal = this.vessel.description;
+        } else if (vesselUuid) {
+            this.vessel = { ...this.vessel, uuid: vesselUuid, name: vesselUuid, isReference: true, unresolved: true };
         }
     }
 
@@ -636,6 +829,23 @@ class CustomApparitionEditorApp extends apps.HandlebarsApplicationMixin(apps.App
         addListenerAll(html, "[data-action='removeSpell']", (el) => {
             this.#syncFormState(html);
             this.spells = this.spells.filter((spell) => spell.uuid !== el.dataset.uuid);
+            this.render();
+        });
+
+        addListenerAll(html, "[data-action='selectExistingVessel']", () => {
+            this.#syncFormState(html);
+            new FocusSpellPickerApp(async (choice) => {
+                const doc = await fromUuid(choice.uuid).catch(() => null);
+                if (!doc?.isOfType?.("spell")) return;
+                this.#syncFormState(this.element);
+                this.vessel = buildVesselStateFromSpell(doc, { isReference: true });
+                this.vesselDescriptionOriginal = this.vessel.description;
+                this.render();
+            }).render({ force: true });
+        });
+        addListenerAll(html, "[data-action='useAuthoredVessel']", () => {
+            this.#syncFormState(html);
+            this.vessel = { ...this.vessel, uuid: null, isReference: false, unresolved: false, source: null };
             this.render();
         });
 
@@ -742,6 +952,10 @@ class CustomApparitionEditorApp extends apps.HandlebarsApplicationMixin(apps.App
         this.loresText = html.querySelector('[name="lores"]')?.value ?? this.loresText;
         this.avatarUuid = html.querySelector('[name="avatarUuid"]')?.value ?? this.avatarUuid;
         this.vessel = {
+            uuid: this.vessel.uuid ?? null,
+            isReference: !!this.vessel.isReference,
+            unresolved: !!this.vessel.unresolved,
+            source: this.vessel.source ?? null,
             name: html.querySelector('[name="vesselName"]')?.value ?? this.vessel.name,
             img: html.querySelector('[name="vesselImg"]')?.value.trim() || this.vessel.img,
             rank: html.querySelector('[name="vesselRank"]')?.value ?? this.vessel.rank,
@@ -871,10 +1085,10 @@ async function exportCustomApparition(item) {
     try {
         const seed = await extractEditorSeed(item, { copyName: false });
         const vesselUuid = parseApparitionVesselUuid(item);
-        const vessel = vesselUuid ? await fromUuid(vesselUuid) : null;
+        const vessel = vesselUuid ? await fromUuid(vesselUuid).catch(() => null) : null;
         const payload = {
             format: "pf2e-dailies-apparition-fix-custom-apparition",
-            version: 4,
+            version: 5,
             sourceUuid: item.getFlag(MODULE_ID, "customApparitionSourceUuid") ?? null,
             name: item.name,
             img: item.img,
@@ -893,6 +1107,7 @@ async function exportCustomApparition(item) {
             })),
             vessel: {
                 ...(seed.vessel ?? {}),
+                uuid: seed.vessel?.uuid ?? vesselUuid,
                 avatarFormUuid: seed.avatarUuid ?? "",
                 source: vessel?.toObject?.() ?? null,
             },
@@ -948,6 +1163,11 @@ async function importCustomApparitionData(data) {
         ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.CustomApparition.Notify.InvalidImport`));
         return null;
     }
+    const vesselUuid = typeof data.vessel?.uuid === "string" ? data.vessel.uuid.trim() : "";
+    if (vesselUuid && !/^[a-z0-9._-]+$/i.test(vesselUuid)) {
+        ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.CustomApparition.Notify.InvalidImport`));
+        return null;
+    }
     const importedSpellFolder = await getApparitionsFolder();
     const spells = [];
     for (const entry of Array.isArray(data.spells) ? data.spells : []) {
@@ -967,6 +1187,8 @@ async function importCustomApparitionData(data) {
         name = `${baseName} (${i})`;
     }
     const vessel = {
+        uuid: vesselUuid || null,
+        isReference: !!vesselUuid,
         name: String(data.vessel?.name ?? `${name} ${game.i18n.localize(`${MODULE_ID}.CustomApparition.Vessel`)}`).trim(),
         img: data.vessel?.img || DEFAULT_VESSEL_IMG,
         rank: Number(data.vessel?.rank) || 1,
@@ -1077,10 +1299,10 @@ class CustomApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
             for (const item of items) {
                 const seed = await extractEditorSeed(item, { copyName: false });
                 const vesselUuid = parseApparitionVesselUuid(item);
-                const vessel = vesselUuid ? await fromUuid(vesselUuid) : null;
+                const vessel = vesselUuid ? await fromUuid(vesselUuid).catch(() => null) : null;
                 data.push({
                     format: "pf2e-dailies-apparition-fix-custom-apparition",
-                    version: 4,
+                    version: 5,
                     sourceUuid: item.getFlag(MODULE_ID, "customApparitionSourceUuid") ?? null,
                     name: item.name,
                     img: item.img,
@@ -1097,12 +1319,17 @@ class CustomApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
                         isCantrip: spell.isCantrip,
                         source: spell.source ?? null,
                     })),
-                    vessel: { ...seed.vessel, avatarFormUuid: seed.avatarUuid ?? "", source: vessel?.toObject?.() ?? null },
+                    vessel: {
+                        ...seed.vessel,
+                        uuid: seed.vessel?.uuid ?? vesselUuid,
+                        avatarFormUuid: seed.avatarUuid ?? "",
+                        source: vessel?.toObject?.() ?? null,
+                    },
                 });
             }
             downloadJson("pf2e-dailies-apparition-fix-custom-apparitions.json", {
                 format: "pf2e-dailies-apparition-fix-custom-apparitions",
-                version: 4,
+                version: 5,
                 apparitions: data,
             });
         });
@@ -1148,6 +1375,10 @@ class CustomApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
 /*  Wiring                                      */
 /* -------------------------------------------- */
 
+Hooks.on("createItem", invalidateFocusSpellChoices);
+Hooks.on("updateItem", invalidateFocusSpellChoices);
+Hooks.on("deleteItem", invalidateFocusSpellChoices);
+
 Hooks.once("init", () => {
     game.settings.registerMenu(MODULE_ID, "customApparitions", {
         name: `${MODULE_ID}.Settings.CustomApparitions.Name`,
@@ -1177,4 +1408,15 @@ Hooks.once("ready", () => {
     }
 });
 
-export { openCustomApparitionCopy, exportCustomApparition, importCustomApparitionData };
+export {
+    openCustomApparitionCopy,
+    exportCustomApparition,
+    importCustomApparitionData,
+    extractEditorSeed,
+    saveCustomApparition,
+    deleteCustomApparition,
+    loadFocusSpellChoices,
+    filterFocusSpellChoices,
+    FocusSpellPickerApp,
+    CustomApparitionEditorApp,
+};

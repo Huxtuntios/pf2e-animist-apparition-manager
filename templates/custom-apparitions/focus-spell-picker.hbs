@@ -1,0 +1,31 @@
+<form class="apparition-fix-focus-picker" autocomplete="off">
+    <div class="form-group">
+        <input
+            type="search"
+            data-role="focus-spell-search"
+            value="{{search}}"
+            placeholder="{{localize 'pf2e-dailies-apparition-fix.CustomApparition.FocusSpellSearchPlaceholder'}}"
+            aria-label="{{localize 'pf2e-dailies-apparition-fix.CustomApparition.FocusSpellSearchPlaceholder'}}"
+        />
+    </div>
+    {{#if loading}}<p class="hint" role="status">{{localize "pf2e-dailies-apparition-fix.CustomApparition.FocusSpellLoading"}}</p>{{/if}}
+    {{#if error}}<p class="hint">{{localize "pf2e-dailies-apparition-fix.CustomApparition.FocusSpellEmpty"}}</p>{{/if}}
+    <ol class="apparition-fix-spell-list apparition-fix-focus-picker-list">
+        {{#each choices}}
+        <li>
+            <button type="button" data-action="select-focus-spell" data-uuid="{{uuid}}">
+                <img src="{{img}}" alt="" />
+                <span class="rank">{{rankLabel}}</span>
+                <span class="name">{{name}}</span>
+                <small class="source">{{source}}</small>
+                {{#if traitsText}}<small class="traits">{{traitsText}}</small>{{/if}}
+                {{#if duplicateName}}<small class="uuid">{{uuid}}</small>{{/if}}
+            </button>
+        </li>
+        {{/each}}
+        <li class="empty" data-role="focus-spell-empty" {{#if choices.length}}hidden{{/if}} {{#if loading}}hidden{{/if}}>{{localize "pf2e-dailies-apparition-fix.CustomApparition.FocusSpellEmpty"}}</li>
+    </ol>
+    <footer class="form-footer apparition-fix-editor-footer">
+        <button type="button" data-action="close">{{localize "pf2e-dailies-apparition-fix.CustomApparition.Cancel"}}</button>
+    </footer>
+</form>

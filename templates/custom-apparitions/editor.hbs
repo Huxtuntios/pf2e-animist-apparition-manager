@@ -74,9 +74,20 @@
             {{/if}}
         </fieldset>
 
+        {{#if vessel.isReference}}
+        <fieldset class="apparition-fix-vessel-spell">
+            <legend>{{localize "pf2e-dailies-apparition-fix.CustomApparition.Vessel"}}</legend>
+            <p class="hint">{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselReference"}}</p>
+            <p><strong>{{vessel.name}}</strong></p>
+            <p class="hint">{{vessel.uuid}}</p>
+            {{#if vessel.unresolved}}<p class="hint">{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselUnresolved"}}</p>{{/if}}
+            <button type="button" data-action="useAuthoredVessel">{{localize "pf2e-dailies-apparition-fix.CustomApparition.UseAuthoredVessel"}}</button>
+        </fieldset>
+        {{else}}
         <fieldset class="apparition-fix-vessel-spell">
             <legend>{{localize "pf2e-dailies-apparition-fix.CustomApparition.Vessel"}}</legend>
             <p class="hint">{{localize "pf2e-dailies-apparition-fix.CustomApparition.VesselHint"}}</p>
+            <button type="button" data-action="selectExistingVessel">{{localize "pf2e-dailies-apparition-fix.CustomApparition.SelectExistingVessel"}}</button>
 
             <div class="form-group apparition-fix-icon-picker">
                 <label>{{localize "pf2e-dailies-apparition-fix.CustomApparition.Icon"}}</label>
@@ -152,6 +163,7 @@
                 <textarea name="vesselDescription" rows="4">{{vessel.description}}</textarea>
             </div>
         </fieldset>
+        {{/if}}
         {{/if}}
     </div>
 
