@@ -135,7 +135,9 @@
         "NotGM": "Only a GM can manage custom apparitions.",
         "Imported": "Imported {count} custom apparition(s).",
         "InvalidImport": "The selected file is not a valid apparition export.",
-        "UnresolvedVessel": "The Vessel spell {name} is unavailable; its UUID was preserved without creating a replacement."
+        "UnresolvedVessel": "The Vessel spell {name} is unavailable; its UUID was preserved without creating a replacement.",
+        "VesselCleanupInProgress": "The Vessel is being cleaned up by another operation. No changes were saved; try again.",
+        "SourceCleanupInProgress": "A source spell is being cleaned up by another operation. No changes were saved; try again."
       },
       "Copy": "Create a copy",
       "CopySuffix": "Copy",

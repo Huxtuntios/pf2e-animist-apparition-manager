@@ -29,6 +29,8 @@ import {
     attachIconFallback,
     getFilePickerClass,
     getCustomAvatarFormUuid,
+    getBondedApparitionFeats,
+    getManagedOrigin,
     loadAvatarsModuleExports,
     LEGACY_CUSTOM_APPARITION_AVATAR_FLAG,
 } from "./apparition-fix.mjs";
@@ -438,6 +440,11 @@ function buildNewVesselSpellSource(vessel) {
 
 // Same-client Vessel lifecycle operations share one lock so old and selected UUIDs cannot race.
 const VESSEL_LIFECYCLE_LOCK = "vessel-lifecycle";
+const VESSEL_OPERATION_CLAIMS_FLAG = "vesselOperationClaims";
+const VESSEL_CLEANUP_CANDIDATES_FLAG = "vesselCleanupCandidates";
+const SOURCE_CLEANUP_CANDIDATES_FLAG = "apparitionSourceCleanupCandidates";
+const CUSTOM_APPARITION_SPELL_FLAG = "customApparitionSpell";
+const VESSEL_OPERATION_TTL = 5 * 60 * 1000;
 const vesselOperationQueues = new Map();
 
 function queueVesselOperation(uuid, operation) {
@@ -450,12 +457,129 @@ function queueVesselOperation(uuid, operation) {
     });
 }
 
-async function deleteOwnedVesselIfUnreferenced(vesselItem, apparitionItem) {
-    if (!vesselItem?.isOwner || !vesselItem.getFlag(MODULE_ID, "customApparitionVessel")) return;
-    const referencedElsewhere = game.items.some(
-        (item) => item.id !== apparitionItem.id && item.type === "feat" && parseApparitionVesselUuid(item) === vesselItem.uuid,
+function isModuleCreatedVessel(vesselDoc) {
+    return !!(vesselDoc?.isOwner && vesselDoc.getFlag(MODULE_ID, "customApparitionVessel"));
+}
+
+function isModuleCreatedApparitionSpell(spellDoc) {
+    return !!(spellDoc?.isOwner && spellDoc.getFlag(MODULE_ID, CUSTOM_APPARITION_SPELL_FLAG));
+}
+
+function activeVesselOperationTokens(vesselDoc, flag) {
+    const now = Date.now();
+    return Object.entries(vesselDoc?.getFlag?.(MODULE_ID, flag) ?? {})
+        .filter(([, timestamp]) => {
+            if (!Number.isFinite(timestamp)) return false;
+            const age = now - timestamp;
+            return age >= -VESSEL_OPERATION_TTL && age < VESSEL_OPERATION_TTL;
+        })
+        .map(([token]) => token);
+}
+
+async function setVesselOperationFlag(vesselDoc, flag, token) {
+    const timestamp = Date.now();
+    const updated = await vesselDoc.update({ [`flags.${MODULE_ID}.${flag}.${token}`]: timestamp });
+    return updated?.getFlag?.(MODULE_ID, `${flag}.${token}`) === timestamp;
+}
+
+async function clearVesselOperationFlag(vesselDoc, flag, token) {
+    try {
+        await vesselDoc.unsetFlag(MODULE_ID, `${flag}.${token}`);
+    } catch {
+        // A stale claim only blocks cleanup, which is safer than deleting a referenced Vessel.
+    }
+}
+
+async function claimModuleOperation(doc, ownershipFlag, cleanupFlag) {
+    if (!doc?.isOwner || !doc.getFlag(MODULE_ID, ownershipFlag)) return { token: null, blocked: false };
+    const token = foundry.utils.randomID();
+    if (!(await setVesselOperationFlag(doc, VESSEL_OPERATION_CLAIMS_FLAG, token))) {
+        return { token: null, blocked: true };
+    }
+    const blocked = activeVesselOperationTokens(doc, cleanupFlag).length > 0;
+    if (blocked) await clearVesselOperationFlag(doc, VESSEL_OPERATION_CLAIMS_FLAG, token);
+    return { token: blocked ? null : token, blocked };
+}
+
+function claimVesselOperation(vesselDoc) {
+    return claimModuleOperation(vesselDoc, "customApparitionVessel", VESSEL_CLEANUP_CANDIDATES_FLAG);
+}
+
+function claimImportedSpellOperation(spellDoc) {
+    return claimModuleOperation(spellDoc, CUSTOM_APPARITION_SPELL_FLAG, SOURCE_CLEANUP_CANDIDATES_FLAG);
+}
+
+function isVesselReferencedByActors(vesselDoc) {
+    const vesselIdentifier = game.settings.get(MODULE_ID, "vesselIdentifier");
+    for (const actor of game.actors ?? []) {
+        for (const feat of getBondedApparitionFeats(actor)) {
+            if (parseApparitionVesselUuid(feat) === vesselDoc.uuid) return true;
+        }
+        for (const item of actor.items ?? []) {
+            if (item.type !== "spell") continue;
+            const origin = getManagedOrigin(item);
+            if (origin?.grant === "vessel" && origin.sourceUuid === vesselDoc.uuid) return true;
+            if (item.sourceId === vesselDoc.uuid && item.flags?.[MODULE_ID]?.identifier === vesselIdentifier) return true;
+        }
+    }
+    return false;
+}
+
+function isVesselReferencedElsewhere(vesselDoc, apparitionItem) {
+    return (
+        game.items.some(
+            (item) => item.id !== apparitionItem?.id && item.type === "feat" && parseApparitionVesselUuid(item) === vesselDoc.uuid,
+        ) || isVesselReferencedByActors(vesselDoc)
     );
-    if (!referencedElsewhere) await vesselItem.delete();
+}
+
+function isApparitionSpellReferencedElsewhere(spellDoc, apparitionItem) {
+    const referencesSpell = (feat) => parseApparitionSpellUuids(feat).includes(spellDoc.uuid);
+    if (game.items.some((item) => item.id !== apparitionItem?.id && item.type === "feat" && referencesSpell(item))) return true;
+    const apparitionIdentifier = game.settings.get(MODULE_ID, "apparitionIdentifier");
+    for (const actor of game.actors ?? []) {
+        if (getBondedApparitionFeats(actor).some(referencesSpell)) return true;
+        for (const item of actor.items ?? []) {
+            if (item.type !== "spell") continue;
+            const origin = getManagedOrigin(item);
+            if (origin?.grant === "spell" && origin.sourceUuid === spellDoc.uuid) return true;
+            if (item.sourceId === spellDoc.uuid && item.flags?.[MODULE_ID]?.identifier === apparitionIdentifier) return true;
+        }
+    }
+    return false;
+}
+
+async function deleteImportedSpellIfUnreferenced(spell, apparitionItem) {
+    if (!isModuleCreatedApparitionSpell(spell)) {
+        if (!isApparitionSpellReferencedElsewhere(spell, apparitionItem)) await spell.delete();
+        return;
+    }
+    const token = foundry.utils.randomID();
+    if (!(await setVesselOperationFlag(spell, SOURCE_CLEANUP_CANDIDATES_FLAG, token))) return;
+    try {
+        const claims = activeVesselOperationTokens(spell, VESSEL_OPERATION_CLAIMS_FLAG);
+        const candidates = activeVesselOperationTokens(spell, SOURCE_CLEANUP_CANDIDATES_FLAG).filter((candidate) => candidate !== token);
+        if (claims.length || candidates.length || isApparitionSpellReferencedElsewhere(spell, apparitionItem)) return;
+        await spell.delete();
+    } finally {
+        if (game.items.get(spell.id)) await clearVesselOperationFlag(spell, SOURCE_CLEANUP_CANDIDATES_FLAG, token);
+    }
+}
+
+async function deleteOwnedVesselIfUnreferenced(vesselItem, apparitionItem, { ignoreClaim = null } = {}) {
+    if (!isModuleCreatedVessel(vesselItem)) return;
+    const token = foundry.utils.randomID();
+    if (!(await setVesselOperationFlag(vesselItem, VESSEL_CLEANUP_CANDIDATES_FLAG, token))) return;
+    try {
+        const claims = activeVesselOperationTokens(vesselItem, VESSEL_OPERATION_CLAIMS_FLAG).filter((claim) => claim !== ignoreClaim);
+        const candidates = activeVesselOperationTokens(vesselItem, VESSEL_CLEANUP_CANDIDATES_FLAG).filter(
+            (candidate) => candidate !== token,
+        );
+        if (claims.length || candidates.length || isVesselReferencedElsewhere(vesselItem, apparitionItem)) return;
+        await vesselItem.delete();
+    } finally {
+        if (game.items.get(vesselItem.id)) await clearVesselOperationFlag(vesselItem, VESSEL_CLEANUP_CANDIDATES_FLAG, token);
+    }
 }
 
 /**
@@ -471,12 +595,24 @@ async function deleteOwnedVesselIfUnreferenced(vesselItem, apparitionItem) {
  * @param {object} data.vessel See `buildVesselSpellSource`.
  * @returns {Promise<Item>} The apparition feat item.
  */
-async function saveCustomApparitionNow({ existingItem, name, img, flavor, lores, spells, vessel, sourceUuid = null, avatarUuid = "" }) {
+async function saveCustomApparitionNow({
+    existingItem,
+    name,
+    img,
+    flavor,
+    lores,
+    spells,
+    vessel,
+    sourceUuid = null,
+    avatarUuid = "",
+    createdDocuments = null,
+}) {
     if (!game.user.isGM) {
         ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.CustomApparition.Notify.NotGM`));
         return null;
     }
 
+    const claims = [];
     try {
         const vesselsFolder = await getVesselsFolder();
         const apparitionsFolder = await getApparitionsFolder();
@@ -484,12 +620,39 @@ async function saveCustomApparitionNow({ existingItem, name, img, flavor, lores,
         const existingVesselUuid = existingItem ? parseApparitionVesselUuid(existingItem) : null;
         const existingVesselItem = existingVesselUuid ? await fromUuid(existingVesselUuid).catch(() => null) : null;
         const isExistingVessel = isVesselOwnedByApparition(existingVesselItem, existingItem);
+        const referencedVesselItem = vessel.isReference && vessel.uuid ? await fromUuid(vessel.uuid).catch(() => null) : null;
+        const sourceSpellDocs = await Promise.all(
+            (spells ?? []).filter((spell) => spell.uuid).map((spell) => fromUuid(spell.uuid).catch(() => null)),
+        );
+        const claimDocs = [];
+        for (const doc of sourceSpellDocs) {
+            if (isModuleCreatedApparitionSpell(doc)) claimDocs.push({ doc, operation: claimImportedSpellOperation });
+        }
+        if (isVesselOwnedByApparition(existingVesselItem, existingItem)) {
+            claimDocs.push({ doc: existingVesselItem, operation: claimVesselOperation });
+        }
+        if (isModuleCreatedVessel(referencedVesselItem)) {
+            claimDocs.push({ doc: referencedVesselItem, operation: claimVesselOperation });
+        }
+        const claimed = new Set();
+        for (const { doc, operation } of claimDocs) {
+            if (claimed.has(doc.uuid)) continue;
+            claimed.add(doc.uuid);
+            const claim = await operation(doc);
+            if (claim.blocked) {
+                const notification = doc.getFlag(MODULE_ID, CUSTOM_APPARITION_SPELL_FLAG)
+                    ? "SourceCleanupInProgress"
+                    : "VesselCleanupInProgress";
+                ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.CustomApparition.Notify.${notification}`));
+                return null;
+            }
+            if (claim.token) claims.push({ doc, token: claim.token });
+        }
 
         let vesselItem = null;
         let vesselReference = null;
         if (vessel.isReference && vessel.uuid) {
-            const referenced = await fromUuid(vessel.uuid).catch(() => null);
-            if (referenced?.isOfType?.("spell")) vesselItem = referenced;
+            if (referencedVesselItem?.isOfType?.("spell")) vesselItem = referencedVesselItem;
             else {
                 vesselReference = { uuid: vessel.uuid, name: vessel.name || vessel.uuid };
                 ui.notifications.warn(
@@ -505,6 +668,15 @@ async function saveCustomApparitionNow({ existingItem, name, img, flavor, lores,
         } else {
             const vesselSource = buildNewVesselSpellSource(vessel);
             [vesselItem] = await Item.createDocuments([{ ...vesselSource, folder: vesselsFolder?.id ?? null }]);
+            if (createdDocuments && vesselItem) createdDocuments.push(vesselItem);
+            if (isModuleCreatedVessel(vesselItem)) {
+                const claim = await claimVesselOperation(vesselItem);
+                if (claim.blocked) {
+                    ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.CustomApparition.Notify.VesselCleanupInProgress`));
+                    return null;
+                }
+                if (claim.token) claims.push({ doc: vesselItem, token: claim.token });
+            }
         }
         const vesselSummary = vesselItem ?? vesselReference;
         if (!vesselSummary?.uuid) throw new Error("The Vessel spell reference has no UUID");
@@ -547,6 +719,7 @@ async function saveCustomApparitionNow({ existingItem, name, img, flavor, lores,
             apparitionItem = existingItem;
         } else {
             [apparitionItem] = await Item.createDocuments([{ ...apparitionSource, folder: apparitionsFolder?.id ?? null }]);
+            if (createdDocuments && apparitionItem) createdDocuments.push(apparitionItem);
         }
 
         await apparitionItem.unsetFlag(MODULE_ID, LEGACY_CUSTOM_APPARITION_AVATAR_FLAG);
@@ -564,7 +737,8 @@ async function saveCustomApparitionNow({ existingItem, name, img, flavor, lores,
             existingVesselUuid !== vesselSummary.uuid &&
             isVesselOwnedByApparition(existingVesselItem, existingItem)
         ) {
-            await deleteOwnedVesselIfUnreferenced(existingVesselItem, apparitionItem);
+            const oldClaim = claims.find((claim) => claim.doc === existingVesselItem)?.token ?? null;
+            await deleteOwnedVesselIfUnreferenced(existingVesselItem, apparitionItem, { ignoreClaim: oldClaim });
         }
 
         ui.notifications.info(formatLocalized(`${MODULE_ID}.CustomApparition.Notify.Saved`, { name }));
@@ -573,6 +747,8 @@ async function saveCustomApparitionNow({ existingItem, name, img, flavor, lores,
     } catch (error) {
         notifyOperationFailed(error);
         return null;
+    } finally {
+        for (const { doc, token } of claims) await clearVesselOperationFlag(doc, VESSEL_OPERATION_CLAIMS_FLAG, token);
     }
 }
 
@@ -1100,56 +1276,58 @@ async function openCustomApparitionCopy(item) {
     }
 }
 
+function buildCustomApparitionExportEntry(item, seed) {
+    const vesselUuid = parseApparitionVesselUuid(item);
+    return {
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        version: 5,
+        sourceUuid: item.getFlag(MODULE_ID, "customApparitionSourceUuid") ?? null,
+        name: item.name,
+        img: item.img,
+        flavor: seed.flavor,
+        lores: seed.loresText
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean),
+        spells: seed.spells.map((spell) => ({
+            uuid: spell.uuid,
+            name: spell.name,
+            img: spell.img,
+            rank: spell.rank,
+            isCantrip: spell.isCantrip,
+            source: spell.source ?? null,
+        })),
+        vessel: {
+            ...(seed.vessel ?? {}),
+            uuid: seed.vessel?.uuid ?? vesselUuid,
+            avatarFormUuid: seed.avatarUuid ?? "",
+            source: seed.vessel?.source ?? null,
+        },
+    };
+}
+
 async function exportCustomApparition(item) {
     if (!game.user.isGM) return;
     try {
         const seed = await extractEditorSeed(item, { copyName: false });
-        const vesselUuid = parseApparitionVesselUuid(item);
-        const vessel = vesselUuid ? await fromUuid(vesselUuid).catch(() => null) : null;
-        const payload = {
-            format: "pf2e-dailies-apparition-fix-custom-apparition",
-            version: 5,
-            sourceUuid: item.getFlag(MODULE_ID, "customApparitionSourceUuid") ?? null,
-            name: item.name,
-            img: item.img,
-            flavor: seed.flavor,
-            lores: seed.loresText
-                .split(",")
-                .map((value) => value.trim())
-                .filter(Boolean),
-            spells: seed.spells.map((spell) => ({
-                uuid: spell.uuid,
-                name: spell.name,
-                img: spell.img,
-                rank: spell.rank,
-                isCantrip: spell.isCantrip,
-                source: spell.source ?? null,
-            })),
-            vessel: {
-                ...(seed.vessel ?? {}),
-                uuid: seed.vessel?.uuid ?? vesselUuid,
-                avatarFormUuid: seed.avatarUuid ?? "",
-                source: vessel?.toObject?.() ?? null,
-            },
-        };
-        downloadJson(`${item.name.replace(/[^a-z0-9_-]+/gi, "_")}.json`, payload);
+        downloadJson(`${item.name.replace(/[^a-z0-9_-]+/gi, "_")}.json`, buildCustomApparitionExportEntry(item, seed));
     } catch (error) {
         notifyOperationFailed(error);
     }
 }
 
 async function importSpellForCustomApparition(entry, folder = null) {
-    if (!entry || typeof entry !== "object") return null;
+    if (!entry || typeof entry !== "object") return { doc: null, created: false };
     if (entry.uuid) {
         try {
             const existing = await fromUuid(entry.uuid);
-            if (existing?.isOfType?.("spell")) return existing;
+            if (existing?.isOfType?.("spell")) return { doc: existing, created: false };
         } catch (error) {
             console.warn(`${MODULE_ID} | Failed to resolve exported spell ${entry.uuid}; trying embedded source`, error);
         }
     }
 
-    if (!entry.source || entry.source.type !== "spell") return null;
+    if (!entry.source || entry.source.type !== "spell") return { doc: null, created: false };
 
     try {
         const source = foundry.utils.deepClone(entry.source);
@@ -1158,6 +1336,7 @@ async function importSpellForCustomApparition(entry, folder = null) {
         delete source.sort;
         source.flags ??= {};
         delete source.flags[MODULE_ID];
+        source.flags[MODULE_ID] = { [CUSTOM_APPARITION_SPELL_FLAG]: true };
         source._stats ??= {};
         delete source._stats.compendiumSource;
         delete source._stats.duplicateSource;
@@ -1170,10 +1349,10 @@ async function importSpellForCustomApparition(entry, folder = null) {
                 ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER },
             },
         ]);
-        return created ?? null;
+        return { doc: created ?? null, created: true };
     } catch (error) {
         console.error(`${MODULE_ID} | Failed to import embedded spell ${entry.name ?? entry.uuid ?? "unknown"}`, error);
-        return null;
+        return { doc: null, created: false };
     }
 }
 
@@ -1190,8 +1369,11 @@ async function importCustomApparitionData(data) {
     }
     const importedSpellFolder = await getApparitionsFolder();
     const spells = [];
+    const createdSpells = [];
+    const createdSaveDocuments = [];
     for (const entry of Array.isArray(data.spells) ? data.spells : []) {
-        const doc = await importSpellForCustomApparition(entry, importedSpellFolder);
+        const { doc, created } = await importSpellForCustomApparition(entry, importedSpellFolder);
+        if (created && doc) createdSpells.push(doc);
         if (doc?.isOfType?.("spell")) spells.push({ ...spellToRow(doc), source: doc.toObject?.() ?? null });
     }
     const baseName = String(data.name ?? "").trim() || game.i18n.localize(`${MODULE_ID}.CustomApparition.ImportedName`);
@@ -1229,6 +1411,7 @@ async function importCustomApparitionData(data) {
         spells,
         vessel,
         sourceUuid: String(data.sourceUuid ?? "").trim() || null,
+        createdDocuments: createdSaveDocuments,
         avatarUuid:
             typeof data.vessel?.avatarFormUuid === "string"
                 ? data.vessel.avatarFormUuid
@@ -1236,7 +1419,20 @@ async function importCustomApparitionData(data) {
                   ? data.avatarUuid
                   : "",
     });
-    if (!item) return null;
+    if (!item) {
+        const partialApparition = createdSaveDocuments.find((doc) => doc.isOfType?.("feat")) ?? null;
+        let retainedCreatedDocument = false;
+        for (const doc of [...createdSaveDocuments].reverse()) {
+            if (!game.items.get(doc.id)) continue;
+            if (isModuleCreatedVessel(doc)) await deleteOwnedVesselIfUnreferenced(doc, null);
+            else await doc.delete();
+            if (game.items.get(doc.id)) retainedCreatedDocument = true;
+        }
+        if (!retainedCreatedDocument) {
+            for (const spell of createdSpells) await deleteImportedSpellIfUnreferenced(spell, partialApparition);
+        }
+        return null;
+    }
 
     // saveCustomApparition already merged source.system with the normalized editor fields.
     // Reapplying the raw source here would undo the mandatory focus/animist traits.
@@ -1318,34 +1514,7 @@ class CustomApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
             const data = [];
             for (const item of items) {
                 const seed = await extractEditorSeed(item, { copyName: false });
-                const vesselUuid = parseApparitionVesselUuid(item);
-                const vessel = vesselUuid ? await fromUuid(vesselUuid).catch(() => null) : null;
-                data.push({
-                    format: "pf2e-dailies-apparition-fix-custom-apparition",
-                    version: 5,
-                    sourceUuid: item.getFlag(MODULE_ID, "customApparitionSourceUuid") ?? null,
-                    name: item.name,
-                    img: item.img,
-                    flavor: seed.flavor,
-                    lores: seed.loresText
-                        .split(",")
-                        .map((v) => v.trim())
-                        .filter(Boolean),
-                    spells: seed.spells.map((spell) => ({
-                        uuid: spell.uuid,
-                        name: spell.name,
-                        img: spell.img,
-                        rank: spell.rank,
-                        isCantrip: spell.isCantrip,
-                        source: spell.source ?? null,
-                    })),
-                    vessel: {
-                        ...seed.vessel,
-                        uuid: seed.vessel?.uuid ?? vesselUuid,
-                        avatarFormUuid: seed.avatarUuid ?? "",
-                        source: vessel?.toObject?.() ?? null,
-                    },
-                });
+                data.push(buildCustomApparitionExportEntry(item, seed));
             }
             downloadJson("pf2e-dailies-apparition-fix-custom-apparitions.json", {
                 format: "pf2e-dailies-apparition-fix-custom-apparitions",
@@ -1431,10 +1600,13 @@ Hooks.once("ready", () => {
 export {
     openCustomApparitionCopy,
     exportCustomApparition,
+    buildCustomApparitionExportEntry,
     importCustomApparitionData,
     extractEditorSeed,
     saveCustomApparition,
+    saveCustomApparitionNow,
     deleteCustomApparition,
+    deleteCustomApparitionNow,
     loadFocusSpellChoices,
     filterFocusSpellChoices,
     isVesselSourceObservableToPlayers,
