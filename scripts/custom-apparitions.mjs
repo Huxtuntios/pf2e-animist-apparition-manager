@@ -509,49 +509,41 @@ function claimImportedSpellOperation(spellDoc) {
     return claimModuleOperation(spellDoc, CUSTOM_APPARITION_SPELL_FLAG, SOURCE_CLEANUP_CANDIDATES_FLAG);
 }
 
-function isVesselReferencedByActors(vesselDoc) {
-    const vesselIdentifier = game.settings.get(MODULE_ID, "vesselIdentifier");
-    for (const actor of game.actors ?? []) {
-        for (const feat of getBondedApparitionFeats(actor)) {
-            if (parseApparitionVesselUuid(feat) === vesselDoc.uuid) return true;
-        }
-        for (const item of actor.items ?? []) {
-            if (item.type !== "spell") continue;
-            const origin = getManagedOrigin(item);
-            if (origin?.grant === "vessel" && origin.sourceUuid === vesselDoc.uuid) return true;
-            if (item.sourceId === vesselDoc.uuid && item.flags?.[MODULE_ID]?.identifier === vesselIdentifier) return true;
-        }
-    }
-    return false;
-}
-
-function isVesselReferencedElsewhere(vesselDoc, apparitionItem) {
+function referencesSpellInEitherRole(feat, spellDoc) {
     return (
-        game.items.some(
-            (item) => item.id !== apparitionItem?.id && item.type === "feat" && parseApparitionVesselUuid(item) === vesselDoc.uuid,
-        ) || isVesselReferencedByActors(vesselDoc)
+        parseApparitionSpellUuids(feat).includes(spellDoc.uuid) ||
+        parseApparitionVesselUuid(feat) === spellDoc.uuid ||
+        feat.getFlag?.(MODULE_ID, "origin")?.vesselUuid === spellDoc.uuid
     );
 }
 
-function isApparitionSpellReferencedElsewhere(spellDoc, apparitionItem) {
-    const referencesSpell = (feat) => parseApparitionSpellUuids(feat).includes(spellDoc.uuid);
-    if (game.items.some((item) => item.id !== apparitionItem?.id && item.type === "feat" && referencesSpell(item))) return true;
-    const apparitionIdentifier = game.settings.get(MODULE_ID, "apparitionIdentifier");
+function isSpellReferencedByActors(spellDoc) {
+    const managedIdentifiers = new Set([
+        game.settings.get(MODULE_ID, "apparitionIdentifier"),
+        game.settings.get(MODULE_ID, "vesselIdentifier"),
+    ]);
     for (const actor of game.actors ?? []) {
-        if (getBondedApparitionFeats(actor).some(referencesSpell)) return true;
+        if (getBondedApparitionFeats(actor).some((feat) => referencesSpellInEitherRole(feat, spellDoc))) return true;
         for (const item of actor.items ?? []) {
             if (item.type !== "spell") continue;
             const origin = getManagedOrigin(item);
-            if (origin?.grant === "spell" && origin.sourceUuid === spellDoc.uuid) return true;
-            if (item.sourceId === spellDoc.uuid && item.flags?.[MODULE_ID]?.identifier === apparitionIdentifier) return true;
+            if (origin?.sourceUuid === spellDoc.uuid) return true;
+            if (item.sourceId === spellDoc.uuid && managedIdentifiers.has(item.flags?.[MODULE_ID]?.identifier)) return true;
         }
     }
     return false;
+}
+
+function isSpellReferencedElsewhere(spellDoc, apparitionItem) {
+    return (
+        game.items.some((item) => item.id !== apparitionItem?.id && item.type === "feat" && referencesSpellInEitherRole(item, spellDoc)) ||
+        isSpellReferencedByActors(spellDoc)
+    );
 }
 
 async function deleteImportedSpellIfUnreferenced(spell, apparitionItem) {
     if (!isModuleCreatedApparitionSpell(spell)) {
-        if (!isApparitionSpellReferencedElsewhere(spell, apparitionItem)) await spell.delete();
+        if (!isSpellReferencedElsewhere(spell, apparitionItem)) await spell.delete();
         return;
     }
     const token = foundry.utils.randomID();
@@ -559,7 +551,7 @@ async function deleteImportedSpellIfUnreferenced(spell, apparitionItem) {
     try {
         const claims = activeVesselOperationTokens(spell, VESSEL_OPERATION_CLAIMS_FLAG);
         const candidates = activeVesselOperationTokens(spell, SOURCE_CLEANUP_CANDIDATES_FLAG).filter((candidate) => candidate !== token);
-        if (claims.length || candidates.length || isApparitionSpellReferencedElsewhere(spell, apparitionItem)) return;
+        if (claims.length || candidates.length || isSpellReferencedElsewhere(spell, apparitionItem)) return;
         await spell.delete();
     } finally {
         if (game.items.get(spell.id)) await clearVesselOperationFlag(spell, SOURCE_CLEANUP_CANDIDATES_FLAG, token);
@@ -575,10 +567,35 @@ async function deleteOwnedVesselIfUnreferenced(vesselItem, apparitionItem, { ign
         const candidates = activeVesselOperationTokens(vesselItem, VESSEL_CLEANUP_CANDIDATES_FLAG).filter(
             (candidate) => candidate !== token,
         );
-        if (claims.length || candidates.length || isVesselReferencedElsewhere(vesselItem, apparitionItem)) return;
+        if (claims.length || candidates.length || isSpellReferencedElsewhere(vesselItem, apparitionItem)) return;
         await vesselItem.delete();
     } finally {
         if (game.items.get(vesselItem.id)) await clearVesselOperationFlag(vesselItem, VESSEL_CLEANUP_CANDIDATES_FLAG, token);
+    }
+}
+
+async function rollbackCreatedDocuments(createdDocuments) {
+    let retainedCreatedDocument = false;
+    for (const doc of [...createdDocuments].reverse()) {
+        if (!game.items.get(doc.id)) continue;
+        try {
+            if (isModuleCreatedVessel(doc)) await deleteOwnedVesselIfUnreferenced(doc, null);
+            else await doc.delete();
+        } catch {
+            retainedCreatedDocument = true;
+        }
+        if (game.items.get(doc.id)) retainedCreatedDocument = true;
+    }
+    return retainedCreatedDocument;
+}
+
+async function rollbackCreatedSpells(createdSpells, apparitionItem) {
+    for (const spell of createdSpells) {
+        try {
+            await deleteImportedSpellIfUnreferenced(spell, apparitionItem);
+        } catch {
+            // Retaining an unused source is safer than allowing rollback to stop early.
+        }
     }
 }
 
@@ -613,6 +630,7 @@ async function saveCustomApparitionNow({
     }
 
     const claims = [];
+    const documentsCreated = [];
     try {
         const vesselsFolder = await getVesselsFolder();
         const apparitionsFolder = await getApparitionsFolder();
@@ -621,17 +639,19 @@ async function saveCustomApparitionNow({
         const existingVesselItem = existingVesselUuid ? await fromUuid(existingVesselUuid).catch(() => null) : null;
         const isExistingVessel = isVesselOwnedByApparition(existingVesselItem, existingItem);
         const referencedVesselItem = vessel.isReference && vessel.uuid ? await fromUuid(vessel.uuid).catch(() => null) : null;
-        const sourceSpellDocs = await Promise.all(
-            (spells ?? []).filter((spell) => spell.uuid).map((spell) => fromUuid(spell.uuid).catch(() => null)),
-        );
+        const sourceSpellRows = (spells ?? []).filter((spell) => spell.uuid);
+        const sourceSpellDocs = await Promise.all(sourceSpellRows.map((spell) => fromUuid(spell.uuid).catch(() => null)));
         const claimDocs = [];
         for (const doc of sourceSpellDocs) {
             if (isModuleCreatedApparitionSpell(doc)) claimDocs.push({ doc, operation: claimImportedSpellOperation });
+            else if (isModuleCreatedVessel(doc)) claimDocs.push({ doc, operation: claimVesselOperation });
         }
         if (isVesselOwnedByApparition(existingVesselItem, existingItem)) {
             claimDocs.push({ doc: existingVesselItem, operation: claimVesselOperation });
         }
-        if (isModuleCreatedVessel(referencedVesselItem)) {
+        if (isModuleCreatedApparitionSpell(referencedVesselItem)) {
+            claimDocs.push({ doc: referencedVesselItem, operation: claimImportedSpellOperation });
+        } else if (isModuleCreatedVessel(referencedVesselItem)) {
             claimDocs.push({ doc: referencedVesselItem, operation: claimVesselOperation });
         }
         const claimed = new Set();
@@ -647,6 +667,26 @@ async function saveCustomApparitionNow({
                 return null;
             }
             if (claim.token) claims.push({ doc, token: claim.token });
+        }
+
+        const currentSourceSpellDocs = await Promise.all(sourceSpellRows.map((spell) => fromUuid(spell.uuid).catch(() => null)));
+        if (
+            sourceSpellDocs.some(
+                (doc, index) =>
+                    doc &&
+                    (!doc.isOfType?.("spell") ||
+                        currentSourceSpellDocs[index]?.uuid !== doc.uuid ||
+                        !currentSourceSpellDocs[index]?.isOfType?.("spell")),
+            )
+        ) {
+            throw new Error("A resolved source Spell disappeared before the apparition could be saved");
+        }
+
+        if (referencedVesselItem?.isOfType?.("spell")) {
+            const currentReferencedVesselItem = await fromUuid(referencedVesselItem.uuid).catch(() => null);
+            if (currentReferencedVesselItem?.uuid !== referencedVesselItem.uuid || !currentReferencedVesselItem?.isOfType?.("spell")) {
+                throw new Error("A resolved Vessel Spell disappeared before the apparition could be saved");
+            }
         }
 
         let vesselItem = null;
@@ -668,11 +708,15 @@ async function saveCustomApparitionNow({
         } else {
             const vesselSource = buildNewVesselSpellSource(vessel);
             [vesselItem] = await Item.createDocuments([{ ...vesselSource, folder: vesselsFolder?.id ?? null }]);
-            if (createdDocuments && vesselItem) createdDocuments.push(vesselItem);
+            if (vesselItem) {
+                documentsCreated.push(vesselItem);
+                if (createdDocuments) createdDocuments.push(vesselItem);
+            }
             if (isModuleCreatedVessel(vesselItem)) {
                 const claim = await claimVesselOperation(vesselItem);
                 if (claim.blocked) {
                     ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.CustomApparition.Notify.VesselCleanupInProgress`));
+                    await rollbackCreatedDocuments(documentsCreated);
                     return null;
                 }
                 if (claim.token) claims.push({ doc: vesselItem, token: claim.token });
@@ -719,7 +763,10 @@ async function saveCustomApparitionNow({
             apparitionItem = existingItem;
         } else {
             [apparitionItem] = await Item.createDocuments([{ ...apparitionSource, folder: apparitionsFolder?.id ?? null }]);
-            if (createdDocuments && apparitionItem) createdDocuments.push(apparitionItem);
+            if (apparitionItem) {
+                documentsCreated.push(apparitionItem);
+                if (createdDocuments) createdDocuments.push(apparitionItem);
+            }
         }
 
         await apparitionItem.unsetFlag(MODULE_ID, LEGACY_CUSTOM_APPARITION_AVATAR_FLAG);
@@ -737,6 +784,13 @@ async function saveCustomApparitionNow({
             existingVesselUuid !== vesselSummary.uuid &&
             isVesselOwnedByApparition(existingVesselItem, existingItem)
         ) {
+            const persistedApparition = await fromUuid(apparitionItem.uuid).catch(() => null);
+            if (
+                parseApparitionVesselUuid(persistedApparition) !== vesselSummary.uuid ||
+                persistedApparition?.getFlag?.(MODULE_ID, "origin")?.vesselUuid !== vesselSummary.uuid
+            ) {
+                throw new Error("The apparition's new Vessel reference was not persisted");
+            }
             const oldClaim = claims.find((claim) => claim.doc === existingVesselItem)?.token ?? null;
             await deleteOwnedVesselIfUnreferenced(existingVesselItem, apparitionItem, { ignoreClaim: oldClaim });
         }
@@ -745,7 +799,10 @@ async function saveCustomApparitionNow({
 
         return apparitionItem;
     } catch (error) {
+        for (const { doc, token } of claims) await clearVesselOperationFlag(doc, VESSEL_OPERATION_CLAIMS_FLAG, token);
+        claims.length = 0;
         notifyOperationFailed(error);
+        await rollbackCreatedDocuments(documentsCreated);
         return null;
     } finally {
         for (const { doc, token } of claims) await clearVesselOperationFlag(doc, VESSEL_OPERATION_CLAIMS_FLAG, token);
@@ -824,6 +881,7 @@ class FocusSpellPickerApp extends apps.HandlebarsApplicationMixin(apps.Applicati
         this.loading = false;
         this.loaded = false;
         this.error = false;
+        this.selecting = false;
     }
     get title() {
         return game.i18n.localize(`${MODULE_ID}.CustomApparition.FocusSpellPickerTitle`);
@@ -871,10 +929,16 @@ class FocusSpellPickerApp extends apps.HandlebarsApplicationMixin(apps.Applicati
             if (empty) empty.hidden = matches.size > 0;
         });
         addListenerAll(html, "[data-action='select-focus-spell']", async (el) => {
+            if (this.selecting) return;
             const choice = this.choices.find((entry) => entry.uuid === el.dataset.uuid);
             if (!choice) return;
-            await this.onSelect?.(choice);
-            this.close();
+            this.selecting = true;
+            try {
+                await this.onSelect?.(choice);
+                this.close();
+            } finally {
+                this.selecting = false;
+            }
         });
         addListenerAll(html, "[data-action='close']", () => this.close());
     }
@@ -1371,72 +1435,73 @@ async function importCustomApparitionData(data) {
     const spells = [];
     const createdSpells = [];
     const createdSaveDocuments = [];
-    for (const entry of Array.isArray(data.spells) ? data.spells : []) {
-        const { doc, created } = await importSpellForCustomApparition(entry, importedSpellFolder);
-        if (created && doc) createdSpells.push(doc);
-        if (doc?.isOfType?.("spell")) spells.push({ ...spellToRow(doc), source: doc.toObject?.() ?? null });
-    }
-    const baseName = String(data.name ?? "").trim() || game.i18n.localize(`${MODULE_ID}.CustomApparition.ImportedName`);
-    let name = baseName;
-    if (game.items.some((item) => item.type === "feat" && item.name === name && item.getFlag(MODULE_ID, "customApparition"))) {
-        let i = 2;
-        while (
-            game.items.some(
-                (item) => item.type === "feat" && item.name === `${baseName} (${i})` && item.getFlag(MODULE_ID, "customApparition"),
-            )
-        )
-            i++;
-        name = `${baseName} (${i})`;
-    }
-    const vessel = {
-        uuid: vesselUuid || null,
-        isReference: !!vesselUuid,
-        name: String(data.vessel?.name ?? `${name} ${game.i18n.localize(`${MODULE_ID}.CustomApparition.Vessel`)}`).trim(),
-        img: data.vessel?.img || DEFAULT_VESSEL_IMG,
-        rank: Number(data.vessel?.rank) || 1,
-        actions: data.vessel?.actions || "1",
-        range: data.vessel?.range || "",
-        target: data.vessel?.target || "",
-        duration: data.vessel?.duration || "",
-        description: data.vessel?.description || "",
-        extraTraits: Array.isArray(data.vessel?.extraTraits) ? data.vessel.extraTraits : [],
-        source: data.vessel?.source ?? null,
-    };
-    const item = await saveCustomApparition({
-        existingItem: null,
-        name,
-        img: data.img || DEFAULT_APPARITION_IMG,
-        flavor: String(data.flavor ?? ""),
-        lores: Array.isArray(data.lores) ? data.lores.map(String).filter(Boolean) : [],
-        spells,
-        vessel,
-        sourceUuid: String(data.sourceUuid ?? "").trim() || null,
-        createdDocuments: createdSaveDocuments,
-        avatarUuid:
-            typeof data.vessel?.avatarFormUuid === "string"
-                ? data.vessel.avatarFormUuid
-                : typeof data.avatarUuid === "string"
-                  ? data.avatarUuid
-                  : "",
-    });
-    if (!item) {
+    const rollback = async () => {
         const partialApparition = createdSaveDocuments.find((doc) => doc.isOfType?.("feat")) ?? null;
-        let retainedCreatedDocument = false;
-        for (const doc of [...createdSaveDocuments].reverse()) {
-            if (!game.items.get(doc.id)) continue;
-            if (isModuleCreatedVessel(doc)) await deleteOwnedVesselIfUnreferenced(doc, null);
-            else await doc.delete();
-            if (game.items.get(doc.id)) retainedCreatedDocument = true;
+        const retainedCreatedDocument = await rollbackCreatedDocuments(createdSaveDocuments);
+        if (!retainedCreatedDocument) await rollbackCreatedSpells(createdSpells, partialApparition);
+    };
+    try {
+        for (const entry of Array.isArray(data.spells) ? data.spells : []) {
+            const { doc, created } = await importSpellForCustomApparition(entry, importedSpellFolder);
+            if (created && doc) createdSpells.push(doc);
+            if (doc?.isOfType?.("spell")) spells.push({ ...spellToRow(doc), source: doc.toObject?.() ?? null });
         }
-        if (!retainedCreatedDocument) {
-            for (const spell of createdSpells) await deleteImportedSpellIfUnreferenced(spell, partialApparition);
+        const baseName = String(data.name ?? "").trim() || game.i18n.localize(`${MODULE_ID}.CustomApparition.ImportedName`);
+        let name = baseName;
+        if (game.items.some((item) => item.type === "feat" && item.name === name && item.getFlag(MODULE_ID, "customApparition"))) {
+            let i = 2;
+            while (
+                game.items.some(
+                    (item) => item.type === "feat" && item.name === `${baseName} (${i})` && item.getFlag(MODULE_ID, "customApparition"),
+                )
+            )
+                i++;
+            name = `${baseName} (${i})`;
         }
+        const vessel = {
+            uuid: vesselUuid || null,
+            isReference: !!vesselUuid,
+            name: String(data.vessel?.name ?? `${name} ${game.i18n.localize(`${MODULE_ID}.CustomApparition.Vessel`)}`).trim(),
+            img: data.vessel?.img || DEFAULT_VESSEL_IMG,
+            rank: Number(data.vessel?.rank) || 1,
+            actions: data.vessel?.actions || "1",
+            range: data.vessel?.range || "",
+            target: data.vessel?.target || "",
+            duration: data.vessel?.duration || "",
+            description: data.vessel?.description || "",
+            extraTraits: Array.isArray(data.vessel?.extraTraits) ? data.vessel.extraTraits : [],
+            source: data.vessel?.source ?? null,
+        };
+        const item = await saveCustomApparition({
+            existingItem: null,
+            name,
+            img: data.img || DEFAULT_APPARITION_IMG,
+            flavor: String(data.flavor ?? ""),
+            lores: Array.isArray(data.lores) ? data.lores.map(String).filter(Boolean) : [],
+            spells,
+            vessel,
+            sourceUuid: String(data.sourceUuid ?? "").trim() || null,
+            createdDocuments: createdSaveDocuments,
+            avatarUuid:
+                typeof data.vessel?.avatarFormUuid === "string"
+                    ? data.vessel.avatarFormUuid
+                    : typeof data.avatarUuid === "string"
+                      ? data.avatarUuid
+                      : "",
+        });
+        if (!item) {
+            await rollback();
+            return null;
+        }
+
+        // saveCustomApparition already merged source.system with the normalized editor fields.
+        // Reapplying the raw source here would undo the mandatory focus/animist traits.
+        return item;
+    } catch (error) {
+        notifyOperationFailed(error);
+        await rollback();
         return null;
     }
-
-    // saveCustomApparition already merged source.system with the normalized editor fields.
-    // Reapplying the raw source here would undo the mandatory focus/animist traits.
-    return item;
 }
 
 async function importCustomApparitionsFromFile(file, onDone = null) {

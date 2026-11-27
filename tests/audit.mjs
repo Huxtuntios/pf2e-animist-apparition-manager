@@ -298,6 +298,28 @@ function deferred() {
     });
     return { promise, resolve };
 }
+async function waitForMilestone(milestone, label, operation = null) {
+    let timeout;
+    const waited = [milestone.promise.then(() => "milestone")];
+    if (operation)
+        waited.push(
+            Promise.resolve(operation).then(
+                () => "completed",
+                () => "completed",
+            ),
+        );
+    try {
+        const result = await Promise.race([
+            ...waited,
+            new Promise((_, reject) => {
+                timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 1000);
+            }),
+        ]);
+        if (result === "completed") throw new Error(`${label} was not reached before its operation completed`);
+    } finally {
+        clearTimeout(timeout);
+    }
+}
 await test("all five runtime modules import without errors", () =>
     assert(core.addApparition && wandering.getWanderingContext && custom.importCustomApparitionData && manager.loadAvailableApparitions));
 await test("diagnostics requests leaf fields without parent/child projection collisions", async () => {
@@ -1117,6 +1139,7 @@ await test("failed import retains documents adopted by another client before rol
     const gate = deferred();
     let partialApparition = null;
     let adoptedCopy = null;
+    let importing;
     Item.createDocuments = async (sources) => {
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Adopted Partial Import") {
@@ -1134,7 +1157,7 @@ await test("failed import retains documents adopted by another client before rol
         return created;
     };
     try {
-        const importing = custom.importCustomApparitionData({
+        importing = custom.importCustomApparitionData({
             format: "pf2e-dailies-apparition-fix-custom-apparition",
             name: "Adopted Partial Import",
             lores: [],
@@ -1143,7 +1166,7 @@ await test("failed import retains documents adopted by another client before rol
             ],
             vessel: { name: "Adopted Partial Vessel", source: { type: "spell", system: {} } },
         });
-        await entered.promise;
+        await waitForMilestone(entered, "operation entry", importing);
         const seed = await custom.extractEditorSeed(partialApparition, { copyName: true });
         adoptedCopy = await custom.saveCustomApparitionNow({
             existingItem: null,
@@ -1178,6 +1201,7 @@ await test("failed import retains documents adopted by another client before rol
         assert(adoptedCopy.system.description.value.includes(spellUuid));
     } finally {
         gate.resolve();
+        await Promise.allSettled([importing]);
         Item.createDocuments = createDocuments;
         console.error = consoleError;
         if (adoptedCopy && game.items.get(adoptedCopy.id)) await custom.deleteCustomApparitionNow(adoptedCopy);
@@ -1236,6 +1260,7 @@ await test("failed import retains Spells adopted through a pre-existing Vessel r
     const gate = deferred();
     let partialApparition = null;
     let adoptedCopy = null;
+    let importing;
     Item.createDocuments = async (sources) => {
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Referenced Adoption Import") {
@@ -1253,7 +1278,7 @@ await test("failed import retains Spells adopted through a pre-existing Vessel r
         return created;
     };
     try {
-        const importing = custom.importCustomApparitionData({
+        importing = custom.importCustomApparitionData({
             format: "pf2e-dailies-apparition-fix-custom-apparition",
             name: "Referenced Adoption Import",
             lores: [],
@@ -1265,7 +1290,7 @@ await test("failed import retains Spells adopted through a pre-existing Vessel r
             ],
             vessel: { uuid: vesselItem.uuid, name: vesselItem.name },
         });
-        await entered.promise;
+        await waitForMilestone(entered, "operation entry", importing);
         const seed = await custom.extractEditorSeed(partialApparition, { copyName: true });
         adoptedCopy = await custom.saveCustomApparitionNow({
             existingItem: null,
@@ -1289,6 +1314,7 @@ await test("failed import retains Spells adopted through a pre-existing Vessel r
         assert(adoptedCopy.system.description.value.includes(vesselItem.uuid));
     } finally {
         gate.resolve();
+        await Promise.allSettled([importing]);
         Item.createDocuments = createDocuments;
         console.error = consoleError;
         if (adoptedCopy && game.items.get(adoptedCopy.id)) await custom.deleteCustomApparitionNow(adoptedCopy);
@@ -1309,6 +1335,7 @@ await test("a Spell cleanup candidate blocks cross-client adoption before deleti
     const cleanupGate = deferred();
     let partialApparition = null;
     let importedSpell = null;
+    let importing;
     Item.createDocuments = async (sources) => {
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Spell Race Import") {
@@ -1326,7 +1353,7 @@ await test("a Spell cleanup candidate blocks cross-client adoption before deleti
         return created;
     };
     try {
-        const importing = custom.importCustomApparitionData({
+        importing = custom.importCustomApparitionData({
             format: "pf2e-dailies-apparition-fix-custom-apparition",
             name: "Spell Race Import",
             lores: [],
@@ -1335,7 +1362,7 @@ await test("a Spell cleanup candidate blocks cross-client adoption before deleti
             ],
             vessel: { uuid: vesselItem.uuid, name: vesselItem.name },
         });
-        await originEntered.promise;
+        await waitForMilestone(originEntered, "source origin write", importing);
         importedSpell = await fromUuid(core.parseApparitionSpellUuids(partialApparition)[0]);
         const deleteSpell = importedSpell.delete.bind(importedSpell);
         importedSpell.delete = async () => {
@@ -1345,7 +1372,7 @@ await test("a Spell cleanup candidate blocks cross-client adoption before deleti
         };
         const seed = await custom.extractEditorSeed(partialApparition, { copyName: true });
         originGate.resolve();
-        await cleanupEntered.promise;
+        await waitForMilestone(cleanupEntered, "source cleanup", importing);
         const adoptedCopy = await custom.saveCustomApparitionNow({
             existingItem: null,
             name: "Spell Race Copy",
@@ -1366,6 +1393,7 @@ await test("a Spell cleanup candidate blocks cross-client adoption before deleti
     } finally {
         originGate.resolve();
         cleanupGate.resolve();
+        await Promise.allSettled([importing]);
         Item.createDocuments = createDocuments;
         console.error = consoleError;
         for (const item of game.items.filter((item) => item.name.startsWith("Spell Race"))) await item.delete();
@@ -1387,6 +1415,8 @@ await test("a cross-client Spell claim prevents failed-import rollback", async (
     let importedSpell = null;
     let restoreUpdate = null;
     let adoptedCopy = null;
+    let importing;
+    let saving;
     Item.createDocuments = async (sources) => {
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Spell Claim Import") {
@@ -1404,7 +1434,7 @@ await test("a cross-client Spell claim prevents failed-import rollback", async (
         return created;
     };
     try {
-        const importing = custom.importCustomApparitionData({
+        importing = custom.importCustomApparitionData({
             format: "pf2e-dailies-apparition-fix-custom-apparition",
             name: "Spell Claim Import",
             lores: [],
@@ -1413,7 +1443,7 @@ await test("a cross-client Spell claim prevents failed-import rollback", async (
             ],
             vessel: { uuid: vesselItem.uuid, name: vesselItem.name },
         });
-        await originEntered.promise;
+        await waitForMilestone(originEntered, "source origin write", importing);
         importedSpell = await fromUuid(core.parseApparitionSpellUuids(partialApparition)[0]);
         const update = importedSpell.update.bind(importedSpell);
         restoreUpdate = update;
@@ -1427,7 +1457,7 @@ await test("a cross-client Spell claim prevents failed-import rollback", async (
             return update(changes);
         };
         const seed = await custom.extractEditorSeed(partialApparition, { copyName: true });
-        const saving = custom.saveCustomApparitionNow({
+        saving = custom.saveCustomApparitionNow({
             existingItem: null,
             name: "Spell Claim Copy",
             img: partialApparition.img,
@@ -1438,7 +1468,7 @@ await test("a cross-client Spell claim prevents failed-import rollback", async (
             sourceUuid: partialApparition.uuid,
             avatarUuid: seed.avatarUuid,
         });
-        await claimEntered.promise;
+        await waitForMilestone(claimEntered, "cross-client source claim", saving);
         originGate.resolve();
         const imported = await importing;
         equal(imported, null);
@@ -1450,6 +1480,8 @@ await test("a cross-client Spell claim prevents failed-import rollback", async (
     } finally {
         originGate.resolve();
         claimGate.resolve();
+        const [, saveResult] = await Promise.allSettled([importing, saving]);
+        if (saveResult.status === "fulfilled") adoptedCopy ??= saveResult.value;
         if (restoreUpdate) importedSpell.update = restoreUpdate;
         Item.createDocuments = createDocuments;
         console.error = consoleError;
@@ -1607,6 +1639,7 @@ await test("a persisted cross-client claim blocks cleanup before the save writes
     const update = targetVessel.update.bind(targetVessel);
     const entered = deferred();
     const gate = deferred();
+    let save;
     targetVessel.update = async (changes) => {
         if (Object.keys(changes).some((key) => key.includes("vesselOperationClaims"))) {
             const result = await update(changes);
@@ -1617,7 +1650,7 @@ await test("a persisted cross-client claim blocks cleanup before the save writes
         return update(changes);
     };
     try {
-        const save = custom.saveCustomApparitionNow({
+        save = custom.saveCustomApparitionNow({
             existingItem: source,
             name: source.name,
             img: source.img,
@@ -1637,7 +1670,7 @@ await test("a persisted cross-client claim blocks cleanup before the save writes
                 extraTraits: [],
             },
         });
-        await entered.promise;
+        await waitForMilestone(entered, "operation entry", save);
         await custom.deleteCustomApparitionNow(target);
         assert(game.items.get(targetVessel.id));
         gate.resolve();
@@ -1646,6 +1679,7 @@ await test("a persisted cross-client claim blocks cleanup before the save writes
         equal(core.parseApparitionVesselUuid(saved), targetVessel.uuid);
     } finally {
         gate.resolve();
+        await Promise.allSettled([save]);
         targetVessel.update = update;
         await custom.deleteCustomApparitionNow(source);
         if (game.items.get(target.id)) await custom.deleteCustomApparitionNow(target);
@@ -1670,6 +1704,7 @@ await test("a delayed cross-client cleanup candidate observes the saved referenc
     const update = targetVessel.update.bind(targetVessel);
     const entered = deferred();
     const gate = deferred();
+    let remove;
     targetVessel.update = async (changes) => {
         if (Object.keys(changes).some((key) => key.includes("vesselCleanupCandidates"))) {
             entered.resolve();
@@ -1678,8 +1713,8 @@ await test("a delayed cross-client cleanup candidate observes the saved referenc
         return update(changes);
     };
     try {
-        const remove = custom.deleteCustomApparitionNow(target);
-        await entered.promise;
+        remove = custom.deleteCustomApparitionNow(target);
+        await waitForMilestone(entered, "operation entry", remove);
         const saved = await custom.saveCustomApparitionNow({
             existingItem: source,
             name: source.name,
@@ -1707,6 +1742,7 @@ await test("a delayed cross-client cleanup candidate observes the saved referenc
         equal(core.parseApparitionVesselUuid(saved), targetVessel.uuid);
     } finally {
         gate.resolve();
+        await Promise.allSettled([remove]);
         targetVessel.update = update;
         await custom.deleteCustomApparitionNow(source);
         if (game.items.get(target.id)) await custom.deleteCustomApparitionNow(target);
@@ -1732,6 +1768,7 @@ await test("Vessel deletion between resolution and claim write fails closed", as
     const update = targetVessel.update.bind(targetVessel);
     const entered = deferred();
     const gate = deferred();
+    let save;
     targetVessel.update = async (changes) => {
         if (Object.keys(changes).some((key) => key.includes("vesselOperationClaims"))) {
             entered.resolve();
@@ -1741,7 +1778,7 @@ await test("Vessel deletion between resolution and claim write fails closed", as
         return update(changes);
     };
     try {
-        const save = custom.saveCustomApparitionNow({
+        save = custom.saveCustomApparitionNow({
             existingItem: source,
             name: source.name,
             img: source.img,
@@ -1761,7 +1798,7 @@ await test("Vessel deletion between resolution and claim write fails closed", as
                 extraTraits: [],
             },
         });
-        await entered.promise;
+        await waitForMilestone(entered, "operation entry", save);
         await target.delete();
         await targetVessel.delete();
         gate.resolve();
@@ -1771,6 +1808,7 @@ await test("Vessel deletion between resolution and claim write fails closed", as
         assert(game.items.get(oldVessel.id));
     } finally {
         gate.resolve();
+        await Promise.allSettled([save]);
         targetVessel.update = update;
         await custom.deleteCustomApparitionNow(source);
         if (game.items.get(target.id)) await custom.deleteCustomApparitionNow(target);
@@ -2805,6 +2843,489 @@ await test("Wandering actual level allowed replacement preserves acquisition lev
     equal(result.system.level.taken, 8);
     equal(result.system.location, "class-8");
     assert(!a.items.has(original.id));
+});
+
+await test("save rejects a source Spell deleted after initial resolution", async () => {
+    const consoleError = console.error;
+    console.error = () => {};
+    const source = doc({ type: "spell", name: "Disappearing Source", system: { level: { value: 1 }, traits: { value: ["focus"] } } });
+    game.items.push(source);
+    documents.set(source.uuid, source);
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Disappearing Source Apparition",
+        lores: [],
+        spells: [{ uuid: source.uuid, name: source.name }],
+        vessel: { name: "Disappearing Source Vessel", source: { type: "spell", system: {} } },
+    });
+    const vesselItem = await fromUuid(core.parseApparitionVesselUuid(original));
+    const update = vesselItem.update.bind(vesselItem);
+    vesselItem.update = async (changes) => {
+        const result = await update(changes);
+        if (Object.keys(changes).some((key) => key.includes("vesselOperationClaims"))) await source.delete();
+        return result;
+    };
+    try {
+        const saved = await custom.saveCustomApparitionNow({
+            existingItem: original,
+            name: original.name,
+            img: original.img,
+            flavor: "",
+            lores: [],
+            spells: [{ uuid: source.uuid, name: source.name }],
+            vessel: { uuid: vesselItem.uuid, isReference: true, name: vesselItem.name },
+        });
+        equal(saved, null);
+        equal(core.parseApparitionVesselUuid(original), vesselItem.uuid);
+        assert(original.system.description.value.includes(source.uuid));
+    } finally {
+        vesselItem.update = update;
+        console.error = consoleError;
+        await custom.deleteCustomApparitionNow(original);
+    }
+});
+await test("save rejects an imported Vessel Spell deleted after initial resolution", async () => {
+    const consoleError = console.error;
+    console.error = () => {};
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Disappearing Vessel Source Original",
+        lores: [],
+        spells: [],
+        vessel: { name: "Disappearing Vessel Source A", source: { type: "spell", system: {} } },
+    });
+    const oldVessel = await fromUuid(core.parseApparitionVesselUuid(original));
+    const roleOriginal = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Disappearing Vessel Role Original",
+        lores: [],
+        spells: [{ name: "Disappearing Vessel Role Spell", source: { type: "spell", system: {} } }],
+        vessel: { name: "Disappearing Vessel Role Authored", source: { type: "spell", system: {} } },
+    });
+    const importedSpell = await fromUuid(core.parseApparitionSpellUuids(roleOriginal)[0]);
+    const update = importedSpell.update.bind(importedSpell);
+    importedSpell.update = async (changes) => {
+        const result = await update(changes);
+        if (Object.keys(changes).some((key) => key.includes("vesselOperationClaims"))) await importedSpell.delete();
+        return result;
+    };
+    try {
+        const saved = await custom.saveCustomApparitionNow({
+            existingItem: original,
+            name: original.name,
+            img: original.img,
+            flavor: "",
+            lores: [],
+            spells: [],
+            vessel: { uuid: importedSpell.uuid, isReference: true, name: importedSpell.name },
+        });
+        equal(saved, null);
+        equal(core.parseApparitionVesselUuid(original), oldVessel.uuid);
+        assert(game.items.get(oldVessel.id));
+    } finally {
+        importedSpell.update = update;
+        console.error = consoleError;
+        await custom.deleteCustomApparitionNow(original);
+        await custom.deleteCustomApparitionNow(roleOriginal);
+    }
+});
+await test("an imported Spell used as a Vessel participates in cleanup claims", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Spell Role Source",
+        lores: [],
+        spells: [{ name: "Spell Role Import", source: { type: "spell", system: { level: { value: 1 }, traits: { value: ["focus"] } } } }],
+        vessel: { name: "Spell Role Vessel", source: { type: "spell", system: {} } },
+    });
+    const importedSpell = await fromUuid(core.parseApparitionSpellUuids(original)[0]);
+    await importedSpell.setFlag(ID, "apparitionSourceCleanupCandidates.otherClient", Date.now());
+    try {
+        const saved = await custom.saveCustomApparitionNow({
+            existingItem: null,
+            name: "Spell Role Copy",
+            img: original.img,
+            flavor: "",
+            lores: [],
+            spells: [],
+            vessel: { uuid: importedSpell.uuid, isReference: true, name: importedSpell.name },
+        });
+        equal(saved, null);
+        assert(!game.items.some((item) => item.name === "Spell Role Copy"));
+    } finally {
+        await importedSpell.unsetFlag(ID, "apparitionSourceCleanupCandidates.otherClient");
+        await custom.deleteCustomApparitionNow(original);
+        if (game.items.get(importedSpell.id)) await importedSpell.delete();
+    }
+});
+await test("a generated Vessel used as a source Spell participates in cleanup claims", async () => {
+    const sourceOriginal = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Vessel Source Role Original",
+        lores: [],
+        spells: [],
+        vessel: { name: "Vessel Source Role A", source: { type: "spell", system: {} } },
+    });
+    const sourceVessel = await fromUuid(core.parseApparitionVesselUuid(sourceOriginal));
+    const target = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Vessel Source Role Target",
+        lores: [],
+        spells: [],
+        vessel: { name: "Vessel Source Role B", source: { type: "spell", system: {} } },
+    });
+    const targetVessel = await fromUuid(core.parseApparitionVesselUuid(target));
+    let saved = null;
+    await sourceVessel.setFlag(ID, "vesselCleanupCandidates.otherClient", Date.now());
+    try {
+        saved = await custom.saveCustomApparitionNow({
+            existingItem: null,
+            name: "Vessel Source Role Copy",
+            img: "",
+            flavor: "",
+            lores: [],
+            spells: [{ uuid: sourceVessel.uuid, name: sourceVessel.name }],
+            vessel: { uuid: targetVessel.uuid, isReference: true, name: targetVessel.name },
+        });
+        equal(saved, null);
+        assert(!game.items.some((item) => item.name === "Vessel Source Role Copy"));
+    } finally {
+        await sourceVessel.unsetFlag(ID, "vesselCleanupCandidates.otherClient");
+        if (saved && game.items.get(saved.id)) await custom.deleteCustomApparitionNow(saved);
+        await custom.deleteCustomApparitionNow(sourceOriginal);
+        await custom.deleteCustomApparitionNow(target);
+        if (game.items.get(sourceVessel.id)) await sourceVessel.delete();
+    }
+});
+await test("Vessel cleanup retains a generated Vessel referenced as an ordinary source Spell", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Ordinary Vessel Source Original",
+        lores: [],
+        spells: [],
+        vessel: { name: "Ordinary Vessel Source A", source: { type: "spell", system: {} } },
+    });
+    const sourceVessel = await fromUuid(core.parseApparitionVesselUuid(original));
+    const target = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Ordinary Vessel Source Target",
+        lores: [],
+        spells: [],
+        vessel: { name: "Ordinary Vessel Source B", source: { type: "spell", system: {} } },
+    });
+    const targetVessel = await fromUuid(core.parseApparitionVesselUuid(target));
+    const copy = await custom.saveCustomApparitionNow({
+        existingItem: null,
+        name: "Ordinary Vessel Source Copy",
+        img: "",
+        flavor: "",
+        lores: [],
+        spells: [{ uuid: sourceVessel.uuid, name: sourceVessel.name }],
+        vessel: { uuid: targetVessel.uuid, isReference: true, name: targetVessel.name },
+    });
+    try {
+        assert(copy);
+        await custom.deleteCustomApparitionNow(original);
+        assert(game.items.get(sourceVessel.id));
+        assert(core.parseApparitionSpellUuids(copy).includes(sourceVessel.uuid));
+    } finally {
+        if (copy && game.items.get(copy.id)) await custom.deleteCustomApparitionNow(copy);
+        await custom.deleteCustomApparitionNow(target);
+        if (game.items.get(sourceVessel.id)) await sourceVessel.delete();
+    }
+});
+await test("Vessel cleanup retains a generated Vessel referenced only by a persisted origin flag", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Origin Only Vessel Original",
+        lores: [],
+        spells: [],
+        vessel: { name: "Origin Only Vessel A", source: { type: "spell", system: {} } },
+    });
+    const sourceVessel = await fromUuid(core.parseApparitionVesselUuid(original));
+    const [reference] = await Item.createDocuments([
+        {
+            type: "feat",
+            name: "Origin Only Vessel Reference",
+            flags: { [ID]: { origin: { type: "custom-apparition", vesselUuid: sourceVessel.uuid } } },
+        },
+    ]);
+    try {
+        await custom.deleteCustomApparitionNow(original);
+        assert(game.items.get(sourceVessel.id));
+    } finally {
+        await reference.delete();
+        if (game.items.get(sourceVessel.id)) await sourceVessel.delete();
+    }
+});
+await test("Vessel cleanup retains a generated Vessel with a managed ordinary Spell grant", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Managed Vessel Source Original",
+        lores: [],
+        spells: [],
+        vessel: { name: "Managed Vessel Source A", source: { type: "spell", system: {} } },
+    });
+    const sourceVessel = await fromUuid(core.parseApparitionVesselUuid(original));
+    const a = actor();
+    add(a, {
+        type: "spell",
+        name: "Managed Vessel Source Copy",
+        flags: { [ID]: { origin: { type: "apparition", grant: "spell", sourceUuid: sourceVessel.uuid } } },
+    });
+    game.actors.push(a);
+    try {
+        await custom.deleteCustomApparitionNow(original);
+        assert(game.items.get(sourceVessel.id));
+    } finally {
+        if (game.items.get(sourceVessel.id)) await sourceVessel.delete();
+    }
+});
+await test("failed import retains a module Spell adopted as a Vessel", async () => {
+    const createDocuments = Item.createDocuments;
+    const consoleError = console.error;
+    console.error = () => {};
+    const entered = deferred();
+    const gate = deferred();
+    let partialApparition = null;
+    let adoptedCopy = null;
+    let importing;
+    Item.createDocuments = async (sources) => {
+        const created = await createDocuments(sources);
+        if (created[0]?.type === "feat" && created[0].name === "Vessel Role Import") {
+            partialApparition = created[0];
+            const setFlag = created[0].setFlag.bind(created[0]);
+            created[0].setFlag = async (namespace, path, value) => {
+                if (path === "origin") {
+                    entered.resolve();
+                    await gate.promise;
+                    throw new Error("Suppressed Vessel role origin");
+                }
+                return setFlag(namespace, path, value);
+            };
+        }
+        return created;
+    };
+    try {
+        importing = custom.importCustomApparitionData({
+            format: "pf2e-dailies-apparition-fix-custom-apparition",
+            name: "Vessel Role Import",
+            lores: [],
+            spells: [
+                { name: "Vessel Role Spell", source: { type: "spell", system: { level: { value: 1 }, traits: { value: ["focus"] } } } },
+            ],
+            vessel: { name: "Vessel Role Authored", source: { type: "spell", system: {} } },
+        });
+        await waitForMilestone(entered, "operation entry", importing);
+        const importedSpell = await fromUuid(core.parseApparitionSpellUuids(partialApparition)[0]);
+        adoptedCopy = await custom.saveCustomApparitionNow({
+            existingItem: null,
+            name: "Vessel Role Copy",
+            img: partialApparition.img,
+            flavor: "",
+            lores: [],
+            spells: [],
+            vessel: { uuid: importedSpell.uuid, isReference: true, name: importedSpell.name },
+            sourceUuid: partialApparition.uuid,
+        });
+        gate.resolve();
+        const imported = await importing;
+        equal(imported, null);
+        assert(adoptedCopy);
+        assert(game.items.some((item) => item.uuid === importedSpell.uuid));
+        equal(core.parseApparitionVesselUuid(adoptedCopy), importedSpell.uuid);
+    } finally {
+        gate.resolve();
+        await Promise.allSettled([importing]);
+        Item.createDocuments = createDocuments;
+        console.error = consoleError;
+        if (adoptedCopy && game.items.get(adoptedCopy.id)) await custom.deleteCustomApparitionNow(adoptedCopy);
+        for (const item of game.items.filter((item) => item.name.startsWith("Vessel Role"))) await item.delete();
+    }
+});
+await test("a suppressed apparition link update preserves the old Vessel", async () => {
+    const consoleError = console.error;
+    console.error = () => {};
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Persisted Link Source",
+        lores: [],
+        spells: [],
+        vessel: { name: "Persisted Link A", source: { type: "spell", system: {} } },
+    });
+    const target = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Persisted Link Target",
+        lores: [],
+        spells: [],
+        vessel: { name: "Persisted Link B", source: { type: "spell", system: {} } },
+    });
+    const oldVessel = await fromUuid(core.parseApparitionVesselUuid(original));
+    const targetVessel = await fromUuid(core.parseApparitionVesselUuid(target));
+    const update = original.update.bind(original);
+    original.update = async (changes) => (changes.system ? undefined : update(changes));
+    try {
+        const saved = await custom.saveCustomApparitionNow({
+            existingItem: original,
+            name: original.name,
+            img: original.img,
+            flavor: "",
+            lores: [],
+            spells: [],
+            vessel: { uuid: targetVessel.uuid, isReference: true, name: targetVessel.name },
+        });
+        equal(saved, null);
+        equal(core.parseApparitionVesselUuid(original), oldVessel.uuid);
+        assert(game.items.get(oldVessel.id));
+    } finally {
+        original.update = update;
+        console.error = consoleError;
+        await custom.deleteCustomApparitionNow(original);
+        await custom.deleteCustomApparitionNow(target);
+    }
+});
+await test("editor save removes a newly created Vessel when its claim is blocked", async () => {
+    const createDocuments = Item.createDocuments;
+    const before = game.items.length;
+    Item.createDocuments = async (sources) => {
+        const created = await createDocuments(sources);
+        if (created[0]?.type === "spell") {
+            const update = created[0].update.bind(created[0]);
+            created[0].update = async (changes) =>
+                Object.keys(changes).some((key) => key.includes("vesselOperationClaims")) ? undefined : update(changes);
+        }
+        return created;
+    };
+    try {
+        const saved = await custom.saveCustomApparitionNow({
+            existingItem: null,
+            name: "Editor Orphan Apparition",
+            img: "",
+            flavor: "",
+            lores: [],
+            spells: [],
+            vessel: { name: "Editor Orphan Vessel", source: { type: "spell", system: {} } },
+        });
+        equal(saved, null);
+        equal(game.items.length, before);
+    } finally {
+        Item.createDocuments = createDocuments;
+        for (const item of game.items.filter((item) => item.name.startsWith("Editor Orphan"))) await item.delete();
+    }
+});
+await test("import conversion failures roll back earlier created Spells", async () => {
+    const createDocuments = Item.createDocuments;
+    const consoleError = console.error;
+    console.error = () => {};
+    const before = game.items.length;
+    Item.createDocuments = async (sources) => {
+        const created = await createDocuments(sources);
+        if (created[0]?.type === "spell")
+            created[0].toObject = () => {
+                throw new Error("Conversion failed");
+            };
+        return created;
+    };
+    let imported;
+    let thrown;
+    try {
+        imported = await custom.importCustomApparitionData({
+            format: "pf2e-dailies-apparition-fix-custom-apparition",
+            name: "Conversion Rollback",
+            lores: [],
+            spells: [
+                {
+                    name: "Conversion Rollback Spell",
+                    source: { type: "spell", system: { level: { value: 1 }, traits: { value: ["focus"] } } },
+                },
+            ],
+            vessel: { name: "Conversion Rollback Vessel", source: { type: "spell", system: {} } },
+        });
+    } catch (error) {
+        thrown = error;
+    }
+    equal(thrown, undefined);
+    equal(imported, null);
+    equal(game.items.length, before);
+    Item.createDocuments = createDocuments;
+    console.error = consoleError;
+});
+await test("rollback continues after deletion errors and retains sources", async () => {
+    const createDocuments = Item.createDocuments;
+    const consoleError = console.error;
+    console.error = () => {};
+    let partialApparition = null;
+    let restoreDelete = null;
+    let vesselCleanupAttempted = false;
+    Item.createDocuments = async (sources) => {
+        const created = await createDocuments(sources);
+        if (created[0]?.type === "spell") {
+            const update = created[0].update.bind(created[0]);
+            created[0].update = async (changes) => {
+                if (Object.keys(changes).some((key) => key.includes("vesselCleanupCandidates"))) vesselCleanupAttempted = true;
+                return update(changes);
+            };
+        }
+        if (created[0]?.type === "feat") {
+            partialApparition = created[0];
+            const setFlag = created[0].setFlag.bind(created[0]);
+            const deleteFeat = created[0].delete.bind(created[0]);
+            restoreDelete = deleteFeat;
+            created[0].setFlag = async (namespace, path, value) => {
+                if (path === "origin") throw new Error("Suppressed rollback origin");
+                return setFlag(namespace, path, value);
+            };
+            created[0].delete = async () => {
+                throw new Error("Suppressed rollback deletion");
+            };
+        }
+        return created;
+    };
+    let imported;
+    let thrown;
+    try {
+        imported = await custom.importCustomApparitionData({
+            format: "pf2e-dailies-apparition-fix-custom-apparition",
+            name: "Deletion Error Rollback",
+            lores: [],
+            spells: [
+                { name: "Deletion Error Spell", source: { type: "spell", system: { level: { value: 1 }, traits: { value: ["focus"] } } } },
+            ],
+            vessel: { name: "Deletion Error Vessel", source: { type: "spell", system: {} } },
+        });
+    } catch (error) {
+        thrown = error;
+    }
+    equal(thrown, undefined);
+    equal(imported, null);
+    assert(game.items.some((item) => item.name === "Deletion Error Spell"));
+    assert(vesselCleanupAttempted);
+    Item.createDocuments = createDocuments;
+    console.error = consoleError;
+    if (partialApparition && restoreDelete) partialApparition.delete = restoreDelete;
+    if (partialApparition && game.items.get(partialApparition.id)) await partialApparition.delete();
+    for (const item of game.items.filter((item) => item.name.startsWith("Deletion Error"))) await item.delete();
+});
+await test("focus spell picker ignores overlapping selections", async () => {
+    const app = new custom.FocusSpellPickerApp(() => {});
+    app.choices = [
+        { uuid: "Item.alpha", name: "Alpha", source: "World", rank: 1, traits: ["focus"] },
+        { uuid: "Item.beta", name: "Beta", source: "World", rank: 1, traits: ["focus"] },
+    ];
+    const root = document.createElement("div");
+    root.innerHTML = `<button data-action="select-focus-spell" data-uuid="Item.alpha">Alpha</button><button data-action="select-focus-spell" data-uuid="Item.beta">Beta</button>`;
+    const gate = deferred();
+    const calls = [];
+    app.onSelect = async (choice) => {
+        calls.push(choice.uuid);
+        if (choice.uuid === "Item.alpha") await gate.promise;
+    };
+    app._attachPartListeners("picker", root);
+    root.querySelector('[data-uuid="Item.alpha"]').click();
+    root.querySelector('[data-uuid="Item.beta"]').click();
+    equal(calls, ["Item.alpha"]);
+    gate.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    equal(calls, ["Item.alpha"]);
 });
 
 const { runManagerTests } = await import("./manager.mjs");
