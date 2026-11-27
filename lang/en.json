@@ -94,6 +94,8 @@
       "VesselUnresolved": "The referenced Vessel spell is unavailable. Its UUID is preserved and no replacement spell is created.",
       "SelectExistingVessel": "Select existing focus spell",
       "UseAuthoredVessel": "Use authored Vessel instead",
+      "VesselSourceVisibilityTitle": "Vessel source visibility",
+      "VesselSourceVisibilityConfirm": "One or more players cannot observe {name}. They may be unable to use this Vessel. Use this source anyway?",
       "FocusSpellPickerTitle": "Select Focus Spell",
       "FocusSpellSearchPlaceholder": "Search by name, source, or trait...",
       "FocusSpellEmpty": "No focus spells found.",

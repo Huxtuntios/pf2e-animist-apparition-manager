@@ -12,7 +12,7 @@
     {{#if error}}<p class="hint">{{localize "pf2e-dailies-apparition-fix.CustomApparition.FocusSpellEmpty"}}</p>{{/if}}
     <ol class="apparition-fix-spell-list apparition-fix-focus-picker-list">
         {{#each choices}}
-        <li>
+        <li {{#if hidden}}hidden{{/if}}>
             <button type="button" data-action="select-focus-spell" data-uuid="{{uuid}}">
                 <img src="{{img}}" alt="" />
                 <span class="rank">{{rankLabel}}</span>
@@ -23,7 +23,7 @@
             </button>
         </li>
         {{/each}}
-        <li class="empty" data-role="focus-spell-empty" {{#if choices.length}}hidden{{/if}} {{#if loading}}hidden{{/if}}>{{localize "pf2e-dailies-apparition-fix.CustomApparition.FocusSpellEmpty"}}</li>
+        <li class="empty" data-role="focus-spell-empty" {{#if hasVisibleChoices}}hidden{{/if}} {{#if loading}}hidden{{/if}}>{{localize "pf2e-dailies-apparition-fix.CustomApparition.FocusSpellEmpty"}}</li>
     </ol>
     <footer class="form-footer apparition-fix-editor-footer">
         <button type="button" data-action="close">{{localize "pf2e-dailies-apparition-fix.CustomApparition.Cancel"}}</button>

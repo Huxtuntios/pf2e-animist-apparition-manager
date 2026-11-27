@@ -94,6 +94,8 @@
       "VesselUnresolved": "Указанное заклинание Сосуда недоступно. Его UUID сохранён, замена не создаётся.",
       "SelectExistingVessel": "Выбрать существующее focus-заклинание",
       "UseAuthoredVessel": "Создать собственное заклинание Сосуда",
+      "VesselSourceVisibilityTitle": "Видимость источника Сосуда",
+      "VesselSourceVisibilityConfirm": "Один или несколько игроков не могут видеть {name}. Они могут не получить этот Сосуд. Всё равно использовать этот источник?",
       "FocusSpellPickerTitle": "Выбор focus-заклинания",
       "FocusSpellSearchPlaceholder": "Поиск по названию, источнику или тегу...",
       "FocusSpellEmpty": "Focus-заклинания не найдены.",

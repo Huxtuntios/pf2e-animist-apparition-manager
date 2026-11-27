@@ -810,6 +810,50 @@ await test("concurrent copy save completes before shared Vessel cleanup", async 
     equal(core.parseApparitionVesselUuid(copy), vessel.uuid);
     assert(game.items.includes(vessel));
 });
+await test("concurrent Vessel switch completes before selected Vessel cleanup", async () => {
+    const source = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Concurrent Switch Source",
+        lores: [],
+        spells: [],
+        vessel: { name: "Concurrent Switch A", source: { type: "spell", system: {} } },
+    });
+    const target = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Concurrent Switch Target",
+        lores: [],
+        spells: [],
+        vessel: { name: "Concurrent Switch B", source: { type: "spell", system: {} } },
+    });
+    const targetVessel = await fromUuid(target.getFlag(ID, "origin").vesselUuid);
+    const save = custom.saveCustomApparition({
+        existingItem: source,
+        name: source.name,
+        img: source.img,
+        flavor: "",
+        lores: [],
+        spells: [],
+        vessel: {
+            uuid: targetVessel.uuid,
+            isReference: true,
+            name: targetVessel.name,
+            rank: 1,
+            actions: "1",
+            range: "",
+            target: "",
+            duration: "",
+            description: "",
+            extraTraits: [],
+        },
+    });
+    const remove = custom.deleteCustomApparition(target);
+    const [saved] = await Promise.all([save, remove]);
+    assert(saved);
+    equal(core.parseApparitionVesselUuid(saved), targetVessel.uuid);
+    assert(game.items.get(targetVessel.id));
+    await custom.deleteCustomApparition(source);
+    assert(!game.items.get(targetVessel.id));
+});
 await test("focus spell choices include world actor and compendium sources and filter by text", async () => {
     const worldFocus = doc({ type: "spell", name: "World Focus", system: { level: { value: 1 }, traits: { value: ["focus"] } } });
     const worldOther = doc({ type: "spell", name: "World Other", system: { level: { value: 1 }, traits: { value: [] } } });
@@ -850,6 +894,23 @@ await test("focus spell choices include world actor and compendium sources and f
         custom.filterFocusSpellChoices(choices, "compendium focus").map((choice) => choice.uuid),
         ["Compendium.pf2e.spells-srd.Item.comp"],
     );
+});
+await test("Vessel source visibility checks every current player", () => {
+    const previousUsers = game.users;
+    const observer = CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER;
+    const allowed = { isGM: false };
+    const denied = { isGM: false };
+    const source = { testUserPermission: (user, permission) => user === allowed && permission === observer };
+    try {
+        game.users = [allowed];
+        equal(custom.isVesselSourceObservableToPlayers(source), true);
+        game.users = [allowed, denied];
+        equal(custom.isVesselSourceObservableToPlayers(source), false);
+        game.users = [];
+        equal(custom.isVesselSourceObservableToPlayers(source), true);
+    } finally {
+        game.users = previousUsers;
+    }
 });
 await test("editing an apparition with an unresolved Vessel reference preserves the UUID", async () => {
     const item = doc({
@@ -895,7 +956,9 @@ await test("exporting an apparition with an unresolved Vessel reference keeps it
     await custom.exportCustomApparition(item);
     equal(savedFile.vessel.uuid, "Broken.vessel");
 });
-await test("focus spell picker filters choices by the current search text", async () => {
+await test("focus spell picker keeps all choices while filtering visibility", async () => {
+    globalThis.Handlebars.registerHelper("localize", (key) => key);
+    const template = globalThis.Handlebars.compile(await (await fetch("../templates/custom-apparitions/focus-spell-picker.hbs")).text());
     const app = new custom.FocusSpellPickerApp(() => {});
     app.choices = [
         { uuid: "Item.alpha", name: "Alpha", source: "World", rank: 1, traits: ["focus"] },
@@ -905,8 +968,22 @@ await test("focus spell picker filters choices by the current search text", asyn
     const context = await app._prepareContext({});
     equal(
         context.choices.map((choice) => choice.uuid),
-        ["Item.beta"],
+        ["Item.alpha", "Item.beta"],
     );
+    equal(
+        context.choices.map((choice) => choice.hidden),
+        [true, false],
+    );
+    equal(context.hasVisibleChoices, true);
+    const root = document.createElement("div");
+    root.innerHTML = template(context);
+    app._attachPartListeners("picker", root);
+    const input = root.querySelector("[data-role='focus-spell-search']");
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    equal(root.querySelector('[data-uuid="Item.alpha"]').closest("li").hidden, false);
+    equal(root.querySelector('[data-uuid="Item.beta"]').closest("li").hidden, false);
+    equal(root.querySelector("[data-role='focus-spell-empty']").hidden, true);
 });
 await test("focus spell picker renders loading state before slow packs finish", async () => {
     const invalidate = () => {
@@ -976,6 +1053,37 @@ await test("focus spell picker shows UUIDs for duplicate names", async () => {
         [...root.querySelectorAll(".uuid")].map((element) => element.textContent.trim()),
         ["Item.alpha", "Item.beta"],
     );
+});
+await test("returning from a reference Vessel writes the displayed description to the owned Vessel", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Description Switch",
+        lores: [],
+        spells: [],
+        vessel: {
+            name: "Owned Description Vessel",
+            source: { type: "spell", system: { description: { value: "<p>Original A</p>" } } },
+        },
+    });
+    try {
+        const editor = new custom.CustomApparitionEditorApp(original);
+        await editor.ready;
+        editor.step = 2;
+        editor.vessel = { ...editor.vessel, uuid: "Item.reference", isReference: true, description: "Reference B" };
+        editor.vesselDescriptionOriginal = "Reference B";
+        editor.render = () => editor;
+        const root = document.createElement("div");
+        root.innerHTML =
+            '<button type="button" data-action="useAuthoredVessel"></button><button type="button" data-action="save"></button>';
+        editor._attachPartListeners("form", root);
+        root.querySelector('[data-action="useAuthoredVessel"]').click();
+        root.querySelector('[data-action="save"]').click();
+        for (let i = 0; i < 100 && editor.isSaving; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+        const vessel = await fromUuid(original.getFlag(ID, "origin").vesselUuid);
+        assert(vessel.system.description.value.includes("Reference B"));
+    } finally {
+        await custom.deleteCustomApparition(original);
+    }
 });
 await test("custom editor renders referenced Vessels read-only and authored Vessels editable", async () => {
     globalThis.Handlebars.registerHelper("localize", (key) => key);

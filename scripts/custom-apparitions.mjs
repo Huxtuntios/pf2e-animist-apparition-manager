@@ -91,6 +91,15 @@ function isFocusSpellDocument(doc) {
     return doc?.type === "spell" && (values.includes("focus") || (values.includes("cantrip") && traits?.traditions?.length === 0));
 }
 
+function isVesselSourceObservableToPlayers(doc) {
+    const players = [...(game.users ?? [])].filter((user) => !user.isGM);
+    if (!players.length) return true;
+    const permission = CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER;
+    return players.every((user) =>
+        doc.testUserPermission ? doc.testUserPermission(user, permission) : (doc.ownership?.default ?? 0) >= permission,
+    );
+}
+
 function buildVesselStateFromSpell(doc, { isReference = true } = {}) {
     return {
         uuid: doc.uuid,
@@ -427,7 +436,8 @@ function buildNewVesselSpellSource(vessel) {
     return foundry.utils.mergeObject(base, buildVesselSpellFields(vessel), { inplace: false });
 }
 
-// Same-client saves and deletes must not race while cleaning a shared Vessel.
+// Same-client Vessel lifecycle operations share one lock so old and selected UUIDs cannot race.
+const VESSEL_LIFECYCLE_LOCK = "vessel-lifecycle";
 const vesselOperationQueues = new Map();
 
 function queueVesselOperation(uuid, operation) {
@@ -567,9 +577,7 @@ async function saveCustomApparitionNow({ existingItem, name, img, flavor, lores,
 }
 
 async function saveCustomApparition(data) {
-    const existingVesselUuid = data.existingItem ? parseApparitionVesselUuid(data.existingItem) : null;
-    const key = existingVesselUuid || data.vessel?.uuid || foundry.utils.randomID();
-    return queueVesselOperation(key, () => saveCustomApparitionNow(data));
+    return queueVesselOperation(VESSEL_LIFECYCLE_LOCK, () => saveCustomApparitionNow(data));
 }
 
 /**
@@ -595,8 +603,7 @@ async function deleteCustomApparitionNow(apparitionItem) {
 }
 
 async function deleteCustomApparition(apparitionItem) {
-    const vesselUuid = parseApparitionVesselUuid(apparitionItem);
-    return queueVesselOperation(vesselUuid, () => deleteCustomApparitionNow(apparitionItem));
+    return queueVesselOperation(VESSEL_LIFECYCLE_LOCK, () => deleteCustomApparitionNow(apparitionItem));
 }
 
 /* -------------------------------------------- */
@@ -663,15 +670,17 @@ class FocusSpellPickerApp extends apps.HandlebarsApplicationMixin(apps.Applicati
     async _prepareContext(_options) {
         if (!this.choices.length && !this.loaded && !this.loading) void this.#ensureChoices();
         const filtered = filterFocusSpellChoices(this.choices, this.search);
+        const matches = new Set(filtered.map((choice) => choice.uuid));
         const nameCounts = new Map();
-        for (const choice of filtered) nameCounts.set(choice.name, (nameCounts.get(choice.name) ?? 0) + 1);
-        const choices = filtered.map((choice) => ({
+        for (const choice of this.choices) nameCounts.set(choice.name, (nameCounts.get(choice.name) ?? 0) + 1);
+        const choices = this.choices.map((choice) => ({
             ...choice,
             duplicateName: nameCounts.get(choice.name) > 1,
+            hidden: !matches.has(choice.uuid),
             rankLabel: choice.rank === 0 ? game.i18n.localize(`${MODULE_ID}.CustomApparition.Cantrip`) : ordinalString(choice.rank),
             traitsText: (choice.traits ?? []).join(", "),
         }));
-        return { choices, loading: this.loading, error: this.error, search: this.search };
+        return { choices, hasVisibleChoices: matches.size > 0, loading: this.loading, error: this.error, search: this.search };
     }
     _attachPartListeners(partId, html, _options) {
         if (partId !== "picker") return;
@@ -685,10 +694,10 @@ class FocusSpellPickerApp extends apps.HandlebarsApplicationMixin(apps.Applicati
             const empty = html.querySelector("[data-role='focus-spell-empty']");
             if (empty) empty.hidden = matches.size > 0;
         });
-        addListenerAll(html, "[data-action='select-focus-spell']", (el) => {
+        addListenerAll(html, "[data-action='select-focus-spell']", async (el) => {
             const choice = this.choices.find((entry) => entry.uuid === el.dataset.uuid);
             if (!choice) return;
-            this.onSelect?.(choice);
+            await this.onSelect?.(choice);
             this.close();
         });
         addListenerAll(html, "[data-action='close']", () => this.close());
@@ -837,6 +846,16 @@ class CustomApparitionEditorApp extends apps.HandlebarsApplicationMixin(apps.App
             new FocusSpellPickerApp(async (choice) => {
                 const doc = await fromUuid(choice.uuid).catch(() => null);
                 if (!doc?.isOfType?.("spell")) return;
+                if (!isVesselSourceObservableToPlayers(doc)) {
+                    const confirmed = await apps.DialogV2.confirm({
+                        window: { title: game.i18n.localize(`${MODULE_ID}.CustomApparition.VesselSourceVisibilityTitle`) },
+                        content: `<p>${formatLocalized(`${MODULE_ID}.CustomApparition.VesselSourceVisibilityConfirm`, {
+                            name: foundry.utils.escapeHTML(doc.name),
+                        })}</p>`,
+                        rejectClose: false,
+                    });
+                    if (!confirmed) return;
+                }
                 this.#syncFormState(this.element);
                 this.vessel = buildVesselStateFromSpell(doc, { isReference: true });
                 this.vesselDescriptionOriginal = this.vessel.description;
@@ -846,6 +865,7 @@ class CustomApparitionEditorApp extends apps.HandlebarsApplicationMixin(apps.App
         addListenerAll(html, "[data-action='useAuthoredVessel']", () => {
             this.#syncFormState(html);
             this.vessel = { ...this.vessel, uuid: null, isReference: false, unresolved: false, source: null };
+            this.vesselDescriptionOriginal = null;
             this.render();
         });
 
@@ -1417,6 +1437,7 @@ export {
     deleteCustomApparition,
     loadFocusSpellChoices,
     filterFocusSpellChoices,
+    isVesselSourceObservableToPlayers,
     FocusSpellPickerApp,
     CustomApparitionEditorApp,
 };
