@@ -176,6 +176,11 @@ const managerUI = new WeakMap();
 const managerReports = new WeakMap();
 const TAB_NAMES = ["apparitions", "abilities", "profiles"];
 const emptyDetails = { spells: [], vessel: null, errors: [] };
+const normalizeSearchText = (value) =>
+    String(value ?? "")
+        .trim()
+        .toLowerCase()
+        .replaceAll("ё", "е");
 
 class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.ApplicationV2) {
     constructor(actor, options = {}) {
@@ -198,6 +203,7 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
         this.closed = false;
         this.hasRendered = false;
         this.started = false;
+        this.randomBinding = false;
         this.renderTimer = null;
         this.metrics = {
             openedAt: performance.now(),
@@ -410,7 +416,8 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
         this.requestRender();
     }
     async bondApparition(uuid) {
-        if (!actorCanModify(this.actor)) return;
+        if (!actorCanModify(this.actor) || !uuid) return;
+        if (getBondedApparitionFeats(this.actor).some((item) => getApparitionKey(item) === uuid)) return;
         try {
             const doc = await resolveManagerDocument(uuid);
             if (!doc?.isOfType?.("feat")) return;
@@ -438,8 +445,17 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
         if (tab === "abilities") void this.ensureWandering();
         if (tab === "profiles") void this.ensureProfile();
     }
+    getFilteredAvailableApparitions() {
+        const query = normalizeSearchText(this.uiState.search);
+        const bonded = new Set(getBondedApparitionFeats(this.actor).map(getApparitionKey));
+        return this.available.filter((entry) => {
+            if (bonded.has(entry.uuid)) return false;
+            if (!query) return true;
+            return normalizeSearchText(`${entry.name} ${(entry.lores ?? []).join(" ")}`).includes(query);
+        });
+    }
     applySearch(root) {
-        const query = this.uiState.search.trim().toLowerCase().replaceAll("ё", "е");
+        const query = normalizeSearchText(this.uiState.search);
         let count = 0;
         for (const row of root.querySelectorAll("[data-searchable]")) {
             row.hidden = !!query && !row.dataset.searchable.includes(query);
@@ -447,6 +463,8 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
         }
         const empty = root.querySelector('[data-role="search-empty"]');
         if (empty) empty.hidden = !query || count > 0;
+        const random = root.querySelector('[data-action="bond-random"]');
+        if (random) random.disabled = this.getFilteredAvailableApparitions().length === 0;
     }
     _onRender(context, options) {
         super._onRender?.(context, options);
@@ -732,15 +750,21 @@ class ManageApparitionsApp extends apps.HandlebarsApplicationMixin(apps.Applicat
             }
         });
 
-        // A random apparition out of the list as it is shown (the search field narrows it).
-        addListenerAll(html, "[data-action='bond-random']", () => {
-            const bondable = [...html.querySelectorAll("[data-searchable]")].filter((row) => !row.hidden);
-            if (!bondable.length) {
+        // Choose from the same current state the search UI represents, never from DOM visibility.
+        addListenerAll(html, "[data-action='bond-random']", async () => {
+            if (this.randomBinding) return;
+            const candidates = this.getFilteredAvailableApparitions();
+            if (!candidates.length) {
                 ui.notifications.warn(game.i18n.localize(`${MODULE_ID}.Notify.NoRandomApparition`));
                 return;
             }
-            const row = bondable[Math.floor(Math.random() * bondable.length)];
-            return this.bondApparition(row.querySelector("[data-action='bond']")?.dataset.uuid);
+            this.randomBinding = true;
+            try {
+                const entry = candidates[Math.floor(Math.random() * candidates.length)];
+                await this.bondApparition(entry.uuid);
+            } finally {
+                this.randomBinding = false;
+            }
         });
 
         // The original apparition (the compendium entry, not the copy on the character).
