@@ -535,7 +535,10 @@ function isSpellReferencedByActors(spellDoc) {
 }
 
 function isSpellReferencedElsewhere(spellDoc, apparitionItem) {
+    const referencedByApparition =
+        apparitionItem && game.items.get(apparitionItem.id) && referencesSpellInEitherRole(apparitionItem, spellDoc);
     return (
+        referencedByApparition ||
         game.items.some((item) => item.id !== apparitionItem?.id && item.type === "feat" && referencesSpellInEitherRole(item, spellDoc)) ||
         isSpellReferencedByActors(spellDoc)
     );
@@ -581,8 +584,9 @@ async function rollbackCreatedDocuments(createdDocuments) {
         try {
             if (isModuleCreatedVessel(doc)) await deleteOwnedVesselIfUnreferenced(doc, null);
             else await doc.delete();
-        } catch {
+        } catch (error) {
             retainedCreatedDocument = true;
+            console.warn(`${MODULE_ID} | Failed to roll back created document ${doc.uuid}`, error);
         }
         if (game.items.get(doc.id)) retainedCreatedDocument = true;
     }
@@ -593,8 +597,8 @@ async function rollbackCreatedSpells(createdSpells, apparitionItem) {
     for (const spell of createdSpells) {
         try {
             await deleteImportedSpellIfUnreferenced(spell, apparitionItem);
-        } catch {
-            // Retaining an unused source is safer than allowing rollback to stop early.
+        } catch (error) {
+            console.warn(`${MODULE_ID} | Failed to roll back imported spell ${spell.uuid}`, error);
         }
     }
 }
@@ -748,6 +752,7 @@ async function saveCustomApparitionNow({
                 [MODULE_ID]: {
                     customApparition: true,
                     vesselAvatarFormUuid: typeof avatarUuid === "string" ? avatarUuid : "",
+                    origin: { type: "custom-apparition", vesselUuid: vesselSummary.uuid },
                     ...(sourceUuid || existingItem?.getFlag(MODULE_ID, "customApparitionSourceUuid")
                         ? { customApparitionSourceUuid: sourceUuid || existingItem.getFlag(MODULE_ID, "customApparitionSourceUuid") }
                         : {}),
@@ -777,8 +782,6 @@ async function saveCustomApparitionNow({
                 [`flags.${MODULE_ID}.origin`]: { type: "custom-apparition", apparitionUuid: apparitionItem.uuid, grant: "vessel" },
             });
         }
-        await apparitionItem.setFlag(MODULE_ID, "origin", { type: "custom-apparition", vesselUuid: vesselSummary.uuid });
-
         if (
             existingVesselItem &&
             existingVesselUuid !== vesselSummary.uuid &&
@@ -1436,9 +1439,8 @@ async function importCustomApparitionData(data) {
     const createdSpells = [];
     const createdSaveDocuments = [];
     const rollback = async () => {
-        const partialApparition = createdSaveDocuments.find((doc) => doc.isOfType?.("feat")) ?? null;
-        const retainedCreatedDocument = await rollbackCreatedDocuments(createdSaveDocuments);
-        if (!retainedCreatedDocument) await rollbackCreatedSpells(createdSpells, partialApparition);
+        await rollbackCreatedDocuments(createdSaveDocuments);
+        await rollbackCreatedSpells(createdSpells, null);
     };
     try {
         for (const entry of Array.isArray(data.spells) ? data.spells : []) {

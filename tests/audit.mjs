@@ -3,6 +3,7 @@
 const ID = "pf2e-dailies-apparition-fix";
 const results = [];
 let errors = [];
+let auditAborted = false;
 console.error = (...args) => errors.push(args.map((x) => String(x?.stack ?? x)).join(" "));
 const assert = (ok, message = "Assertion failed") => {
     if (!ok) throw Error(message);
@@ -275,6 +276,7 @@ function attunement(a) {
     return add(a, { type: "feat", name: "Attunement", system: { slug: "apparition-attunement", rules: [] } });
 }
 async function test(name, fn) {
+    if (auditAborted) return;
     notices = [];
     errors = [];
     settings.set("enabled", true);
@@ -285,6 +287,7 @@ async function test(name, fn) {
         results.push({ name, pass: true });
     } catch (e) {
         results.push({ name, pass: false, error: String(e.stack ?? e), errors, notices });
+        if (e?.code === "TEST_DRAIN_TIMEOUT") auditAborted = true;
     } finally {
         game.actors = new Collection();
         game.packs.clear();
@@ -316,6 +319,23 @@ async function waitForMilestone(milestone, label, operation = null) {
             }),
         ]);
         if (result === "completed") throw new Error(`${label} was not reached before its operation completed`);
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+async function settleOperations(operations, label) {
+    let timeout;
+    try {
+        return await Promise.race([
+            Promise.allSettled(operations.filter(Boolean)),
+            new Promise((_, reject) => {
+                timeout = setTimeout(() => {
+                    const error = new Error(`Timed out draining ${label}`);
+                    error.code = "TEST_DRAIN_TIMEOUT";
+                    reject(error);
+                }, 1000);
+            }),
+        ]);
     } finally {
         clearTimeout(timeout);
     }
@@ -1106,10 +1126,10 @@ await test("failed import removes partial apparition and Vessel documents", asyn
     Item.createDocuments = async (sources) => {
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat") {
-            const setFlag = created[0].setFlag.bind(created[0]);
-            created[0].setFlag = async (namespace, path, value) => {
-                if (path === "origin") throw new Error("Suppressed origin write");
-                return setFlag(namespace, path, value);
+            const unsetFlag = created[0].unsetFlag.bind(created[0]);
+            created[0].unsetFlag = async (namespace, path) => {
+                if (path === "customApparitionAvatarUuid") throw new Error("Suppressed legacy flag cleanup");
+                return unsetFlag(namespace, path);
             };
         }
         return created;
@@ -1144,14 +1164,14 @@ await test("failed import retains documents adopted by another client before rol
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Adopted Partial Import") {
             partialApparition = created[0];
-            const setFlag = created[0].setFlag.bind(created[0]);
-            created[0].setFlag = async (namespace, path, value) => {
-                if (path === "origin") {
+            const unsetFlag = created[0].unsetFlag.bind(created[0]);
+            created[0].unsetFlag = async (namespace, path) => {
+                if (path === "customApparitionAvatarUuid") {
                     entered.resolve();
                     await gate.promise;
-                    throw new Error("Suppressed origin write after adoption");
+                    throw new Error("Suppressed legacy flag cleanup after adoption");
                 }
-                return setFlag(namespace, path, value);
+                return unsetFlag(namespace, path);
             };
         }
         return created;
@@ -1201,7 +1221,7 @@ await test("failed import retains documents adopted by another client before rol
         assert(adoptedCopy.system.description.value.includes(spellUuid));
     } finally {
         gate.resolve();
-        await Promise.allSettled([importing]);
+        await settleOperations([importing], "import operation");
         Item.createDocuments = createDocuments;
         console.error = consoleError;
         if (adoptedCopy && game.items.get(adoptedCopy.id)) await custom.deleteCustomApparitionNow(adoptedCopy);
@@ -1219,10 +1239,10 @@ await test("failed import does not delete a referenced pre-existing Vessel", asy
     Item.createDocuments = async (sources) => {
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat") {
-            const setFlag = created[0].setFlag.bind(created[0]);
-            created[0].setFlag = async (namespace, path, value) => {
-                if (path === "origin") throw new Error("Suppressed referenced origin write");
-                return setFlag(namespace, path, value);
+            const unsetFlag = created[0].unsetFlag.bind(created[0]);
+            created[0].unsetFlag = async (namespace, path) => {
+                if (path === "customApparitionAvatarUuid") throw new Error("Suppressed referenced legacy flag cleanup");
+                return unsetFlag(namespace, path);
             };
         }
         return created;
@@ -1265,14 +1285,14 @@ await test("failed import retains Spells adopted through a pre-existing Vessel r
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Referenced Adoption Import") {
             partialApparition = created[0];
-            const setFlag = created[0].setFlag.bind(created[0]);
-            created[0].setFlag = async (namespace, path, value) => {
-                if (path === "origin") {
+            const unsetFlag = created[0].unsetFlag.bind(created[0]);
+            created[0].unsetFlag = async (namespace, path) => {
+                if (path === "customApparitionAvatarUuid") {
                     entered.resolve();
                     await gate.promise;
-                    throw new Error("Suppressed referenced origin after adoption");
+                    throw new Error("Suppressed referenced legacy flag cleanup after adoption");
                 }
-                return setFlag(namespace, path, value);
+                return unsetFlag(namespace, path);
             };
         }
         return created;
@@ -1314,7 +1334,7 @@ await test("failed import retains Spells adopted through a pre-existing Vessel r
         assert(adoptedCopy.system.description.value.includes(vesselItem.uuid));
     } finally {
         gate.resolve();
-        await Promise.allSettled([importing]);
+        await settleOperations([importing], "import operation");
         Item.createDocuments = createDocuments;
         console.error = consoleError;
         if (adoptedCopy && game.items.get(adoptedCopy.id)) await custom.deleteCustomApparitionNow(adoptedCopy);
@@ -1340,14 +1360,14 @@ await test("a Spell cleanup candidate blocks cross-client adoption before deleti
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Spell Race Import") {
             partialApparition = created[0];
-            const setFlag = created[0].setFlag.bind(created[0]);
-            created[0].setFlag = async (namespace, path, value) => {
-                if (path === "origin") {
+            const unsetFlag = created[0].unsetFlag.bind(created[0]);
+            created[0].unsetFlag = async (namespace, path) => {
+                if (path === "customApparitionAvatarUuid") {
                     originEntered.resolve();
                     await originGate.promise;
-                    throw new Error("Suppressed Spell race origin");
+                    throw new Error("Suppressed Spell race legacy flag cleanup");
                 }
-                return setFlag(namespace, path, value);
+                return unsetFlag(namespace, path);
             };
         }
         return created;
@@ -1393,7 +1413,7 @@ await test("a Spell cleanup candidate blocks cross-client adoption before deleti
     } finally {
         originGate.resolve();
         cleanupGate.resolve();
-        await Promise.allSettled([importing]);
+        await settleOperations([importing], "import operation");
         Item.createDocuments = createDocuments;
         console.error = consoleError;
         for (const item of game.items.filter((item) => item.name.startsWith("Spell Race"))) await item.delete();
@@ -1421,14 +1441,14 @@ await test("a cross-client Spell claim prevents failed-import rollback", async (
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Spell Claim Import") {
             partialApparition = created[0];
-            const setFlag = created[0].setFlag.bind(created[0]);
-            created[0].setFlag = async (namespace, path, value) => {
-                if (path === "origin") {
+            const unsetFlag = created[0].unsetFlag.bind(created[0]);
+            created[0].unsetFlag = async (namespace, path) => {
+                if (path === "customApparitionAvatarUuid") {
                     originEntered.resolve();
                     await originGate.promise;
-                    throw new Error("Suppressed Spell claim origin");
+                    throw new Error("Suppressed Spell claim legacy flag cleanup");
                 }
-                return setFlag(namespace, path, value);
+                return unsetFlag(namespace, path);
             };
         }
         return created;
@@ -1480,7 +1500,7 @@ await test("a cross-client Spell claim prevents failed-import rollback", async (
     } finally {
         originGate.resolve();
         claimGate.resolve();
-        const [, saveResult] = await Promise.allSettled([importing, saving]);
+        const [, saveResult] = await settleOperations([importing, saving], "import and save operations");
         if (saveResult.status === "fulfilled") adoptedCopy ??= saveResult.value;
         if (restoreUpdate) importedSpell.update = restoreUpdate;
         Item.createDocuments = createDocuments;
@@ -1679,7 +1699,7 @@ await test("a persisted cross-client claim blocks cleanup before the save writes
         equal(core.parseApparitionVesselUuid(saved), targetVessel.uuid);
     } finally {
         gate.resolve();
-        await Promise.allSettled([save]);
+        await settleOperations([save], "save operation");
         targetVessel.update = update;
         await custom.deleteCustomApparitionNow(source);
         if (game.items.get(target.id)) await custom.deleteCustomApparitionNow(target);
@@ -1742,7 +1762,7 @@ await test("a delayed cross-client cleanup candidate observes the saved referenc
         equal(core.parseApparitionVesselUuid(saved), targetVessel.uuid);
     } finally {
         gate.resolve();
-        await Promise.allSettled([remove]);
+        await settleOperations([remove], "delete operation");
         targetVessel.update = update;
         await custom.deleteCustomApparitionNow(source);
         if (game.items.get(target.id)) await custom.deleteCustomApparitionNow(target);
@@ -1808,7 +1828,7 @@ await test("Vessel deletion between resolution and claim write fails closed", as
         assert(game.items.get(oldVessel.id));
     } finally {
         gate.resolve();
-        await Promise.allSettled([save]);
+        await settleOperations([save], "save operation");
         targetVessel.update = update;
         await custom.deleteCustomApparitionNow(source);
         if (game.items.get(target.id)) await custom.deleteCustomApparitionNow(target);
@@ -3093,14 +3113,14 @@ await test("failed import retains a module Spell adopted as a Vessel", async () 
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Vessel Role Import") {
             partialApparition = created[0];
-            const setFlag = created[0].setFlag.bind(created[0]);
-            created[0].setFlag = async (namespace, path, value) => {
-                if (path === "origin") {
+            const unsetFlag = created[0].unsetFlag.bind(created[0]);
+            created[0].unsetFlag = async (namespace, path) => {
+                if (path === "customApparitionAvatarUuid") {
                     entered.resolve();
                     await gate.promise;
-                    throw new Error("Suppressed Vessel role origin");
+                    throw new Error("Suppressed Vessel role legacy flag cleanup");
                 }
-                return setFlag(namespace, path, value);
+                return unsetFlag(namespace, path);
             };
         }
         return created;
@@ -3135,7 +3155,7 @@ await test("failed import retains a module Spell adopted as a Vessel", async () 
         equal(core.parseApparitionVesselUuid(adoptedCopy), importedSpell.uuid);
     } finally {
         gate.resolve();
-        await Promise.allSettled([importing]);
+        await settleOperations([importing], "import operation");
         Item.createDocuments = createDocuments;
         console.error = consoleError;
         if (adoptedCopy && game.items.get(adoptedCopy.id)) await custom.deleteCustomApparitionNow(adoptedCopy);
@@ -3179,6 +3199,148 @@ await test("a suppressed apparition link update preserves the old Vessel", async
     } finally {
         original.update = update;
         console.error = consoleError;
+        await custom.deleteCustomApparitionNow(original);
+        await custom.deleteCustomApparitionNow(target);
+    }
+});
+await test("failed import cleans an unreferenced Spell when a created Vessel is retained", async () => {
+    const createDocuments = Item.createDocuments;
+    const consoleError = console.error;
+    console.error = () => {};
+    const entered = deferred();
+    const gate = deferred();
+    let partialApparition = null;
+    let adoptedCopy = null;
+    let importing;
+    Item.createDocuments = async (sources) => {
+        const created = await createDocuments(sources);
+        if (created[0]?.type === "feat" && created[0].name === "Independent Spell Rollback") {
+            partialApparition = created[0];
+            const unsetFlag = created[0].unsetFlag.bind(created[0]);
+            created[0].unsetFlag = async (namespace, path) => {
+                if (path === "customApparitionAvatarUuid") {
+                    entered.resolve();
+                    await gate.promise;
+                    throw new Error("Suppressed legacy flag cleanup");
+                }
+                return unsetFlag(namespace, path);
+            };
+        }
+        return created;
+    };
+    try {
+        importing = custom.importCustomApparitionData({
+            format: "pf2e-dailies-apparition-fix-custom-apparition",
+            name: "Independent Spell Rollback",
+            lores: [],
+            spells: [
+                {
+                    name: "Independent Rollback Spell",
+                    source: { type: "spell", system: { level: { value: 1 }, traits: { value: ["focus"] } } },
+                },
+            ],
+            vessel: { name: "Independent Rollback Vessel", source: { type: "spell", system: {} } },
+        });
+        await waitForMilestone(entered, "legacy flag cleanup", importing);
+        const sourceSpell = await fromUuid(core.parseApparitionSpellUuids(partialApparition)[0]);
+        const vessel = await fromUuid(core.parseApparitionVesselUuid(partialApparition));
+        adoptedCopy = await custom.saveCustomApparitionNow({
+            existingItem: null,
+            name: "Independent Rollback Copy",
+            img: partialApparition.img,
+            flavor: "",
+            lores: [],
+            spells: [],
+            vessel: { uuid: vessel.uuid, isReference: true, name: vessel.name },
+        });
+        gate.resolve();
+        const imported = await importing;
+        equal(imported, null);
+        assert(adoptedCopy);
+        assert(game.items.get(vessel.id));
+        assert(!game.items.get(sourceSpell.id));
+    } finally {
+        gate.resolve();
+        await settleOperations([importing], "import operation");
+        Item.createDocuments = createDocuments;
+        console.error = consoleError;
+        if (adoptedCopy && game.items.get(adoptedCopy.id)) await custom.deleteCustomApparitionNow(adoptedCopy);
+        for (const item of game.items.filter((item) => item.name.startsWith("Independent Rollback"))) await item.delete();
+    }
+});
+await test("switching Vessels retains the old Vessel still listed as a Spell by the edited feat", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Same Feat Cross Role Source",
+        lores: [],
+        spells: [],
+        vessel: { name: "Same Feat Cross Role A", source: { type: "spell", system: {} } },
+    });
+    const oldVessel = await fromUuid(core.parseApparitionVesselUuid(original));
+    const target = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Same Feat Cross Role Target",
+        lores: [],
+        spells: [],
+        vessel: { name: "Same Feat Cross Role B", source: { type: "spell", system: {} } },
+    });
+    const targetVessel = await fromUuid(core.parseApparitionVesselUuid(target));
+    try {
+        const saved = await custom.saveCustomApparitionNow({
+            existingItem: original,
+            name: original.name,
+            img: original.img,
+            flavor: "",
+            lores: [],
+            spells: [{ uuid: oldVessel.uuid, name: oldVessel.name }],
+            vessel: { uuid: targetVessel.uuid, isReference: true, name: targetVessel.name },
+        });
+        assert(saved);
+        assert(game.items.get(oldVessel.id));
+        assert(core.parseApparitionSpellUuids(saved).includes(oldVessel.uuid));
+        equal(core.parseApparitionVesselUuid(saved), targetVessel.uuid);
+    } finally {
+        await custom.deleteCustomApparitionNow(original);
+        await custom.deleteCustomApparitionNow(target);
+        if (game.items.get(oldVessel.id)) await oldVessel.delete();
+    }
+});
+await test("feat update persists the Vessel description and origin atomically", async () => {
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Atomic Origin Source",
+        lores: [],
+        spells: [],
+        vessel: { name: "Atomic Origin A", source: { type: "spell", system: {} } },
+    });
+    const target = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Atomic Origin Target",
+        lores: [],
+        spells: [],
+        vessel: { name: "Atomic Origin B", source: { type: "spell", system: {} } },
+    });
+    const targetVessel = await fromUuid(core.parseApparitionVesselUuid(target));
+    const setFlag = original.setFlag.bind(original);
+    original.setFlag = async (namespace, path, value) => {
+        if (path === "origin") throw new Error("Separate origin write must not be used");
+        return setFlag(namespace, path, value);
+    };
+    try {
+        const saved = await custom.saveCustomApparitionNow({
+            existingItem: original,
+            name: original.name,
+            img: original.img,
+            flavor: "",
+            lores: [],
+            spells: [],
+            vessel: { uuid: targetVessel.uuid, isReference: true, name: targetVessel.name },
+        });
+        assert(saved);
+        equal(core.parseApparitionVesselUuid(saved), targetVessel.uuid);
+        equal(saved.getFlag(ID, "origin").vesselUuid, targetVessel.uuid);
+    } finally {
+        original.setFlag = setFlag;
         await custom.deleteCustomApparitionNow(original);
         await custom.deleteCustomApparitionNow(target);
     }
@@ -3243,16 +3405,23 @@ await test("import conversion failures roll back earlier created Spells", async 
     } catch (error) {
         thrown = error;
     }
-    equal(thrown, undefined);
-    equal(imported, null);
-    equal(game.items.length, before);
-    Item.createDocuments = createDocuments;
-    console.error = consoleError;
+    try {
+        equal(thrown, undefined);
+        equal(imported, null);
+        equal(game.items.length, before);
+    } finally {
+        Item.createDocuments = createDocuments;
+        console.error = consoleError;
+        for (const item of game.items.filter((item) => item.name.startsWith("Conversion Rollback"))) await item.delete();
+    }
 });
 await test("rollback continues after deletion errors and retains sources", async () => {
     const createDocuments = Item.createDocuments;
     const consoleError = console.error;
+    const consoleWarn = console.warn;
+    const warnings = [];
     console.error = () => {};
+    console.warn = (...args) => warnings.push(args.map(String).join(" "));
     let partialApparition = null;
     let restoreDelete = null;
     let vesselCleanupAttempted = false;
@@ -3267,12 +3436,12 @@ await test("rollback continues after deletion errors and retains sources", async
         }
         if (created[0]?.type === "feat") {
             partialApparition = created[0];
-            const setFlag = created[0].setFlag.bind(created[0]);
+            const unsetFlag = created[0].unsetFlag.bind(created[0]);
             const deleteFeat = created[0].delete.bind(created[0]);
             restoreDelete = deleteFeat;
-            created[0].setFlag = async (namespace, path, value) => {
-                if (path === "origin") throw new Error("Suppressed rollback origin");
-                return setFlag(namespace, path, value);
+            created[0].unsetFlag = async (namespace, path) => {
+                if (path === "customApparitionAvatarUuid") throw new Error("Suppressed rollback legacy flag cleanup");
+                return unsetFlag(namespace, path);
             };
             created[0].delete = async () => {
                 throw new Error("Suppressed rollback deletion");
@@ -3295,15 +3464,20 @@ await test("rollback continues after deletion errors and retains sources", async
     } catch (error) {
         thrown = error;
     }
-    equal(thrown, undefined);
-    equal(imported, null);
-    assert(game.items.some((item) => item.name === "Deletion Error Spell"));
-    assert(vesselCleanupAttempted);
-    Item.createDocuments = createDocuments;
-    console.error = consoleError;
-    if (partialApparition && restoreDelete) partialApparition.delete = restoreDelete;
-    if (partialApparition && game.items.get(partialApparition.id)) await partialApparition.delete();
-    for (const item of game.items.filter((item) => item.name.startsWith("Deletion Error"))) await item.delete();
+    try {
+        equal(thrown, undefined);
+        equal(imported, null);
+        assert(game.items.some((item) => item.name === "Deletion Error Spell"));
+        assert(vesselCleanupAttempted);
+        assert(warnings.length > 0);
+    } finally {
+        Item.createDocuments = createDocuments;
+        console.error = consoleError;
+        console.warn = consoleWarn;
+        if (partialApparition && restoreDelete) partialApparition.delete = restoreDelete;
+        if (partialApparition && game.items.get(partialApparition.id)) await partialApparition.delete();
+        for (const item of game.items.filter((item) => item.name.startsWith("Deletion Error"))) await item.delete();
+    }
 });
 await test("focus spell picker ignores overlapping selections", async () => {
     const app = new custom.FocusSpellPickerApp(() => {});
