@@ -763,6 +763,9 @@ async function saveCustomApparitionNow({
 
         let apparitionItem;
         if (existingItem?.isOwner) {
+            if (existingItem.getFlag(MODULE_ID, LEGACY_CUSTOM_APPARITION_AVATAR_FLAG)) {
+                await existingItem.unsetFlag(MODULE_ID, LEGACY_CUSTOM_APPARITION_AVATAR_FLAG);
+            }
             const { type: _type, ownership: _ownership, ...updateData } = apparitionSource;
             await existingItem.update(updateData);
             apparitionItem = existingItem;
@@ -774,26 +777,23 @@ async function saveCustomApparitionNow({
             }
         }
 
-        await apparitionItem.unsetFlag(MODULE_ID, LEGACY_CUSTOM_APPARITION_AVATAR_FLAG);
-
         if (vesselItem && !vessel.isReference && vesselItem.getFlag(MODULE_ID, "customApparitionVessel")) {
             await vesselItem.update({
                 [`flags.${MODULE_ID}.customApparitionSource`]: apparitionItem.uuid,
                 [`flags.${MODULE_ID}.origin`]: { type: "custom-apparition", apparitionUuid: apparitionItem.uuid, grant: "vessel" },
             });
         }
+        const persistedApparition = await fromUuid(apparitionItem.uuid).catch(() => null);
+        const persistedOrigin = await persistedApparition?.getFlag?.(MODULE_ID, "origin");
+        if (parseApparitionVesselUuid(persistedApparition) !== vesselSummary.uuid || persistedOrigin?.vesselUuid !== vesselSummary.uuid) {
+            throw new Error("The apparition's new Vessel reference was not persisted");
+        }
         if (
-            existingVesselItem &&
+            existingVesselUuid &&
             existingVesselUuid !== vesselSummary.uuid &&
+            existingVesselItem &&
             isVesselOwnedByApparition(existingVesselItem, existingItem)
         ) {
-            const persistedApparition = await fromUuid(apparitionItem.uuid).catch(() => null);
-            if (
-                parseApparitionVesselUuid(persistedApparition) !== vesselSummary.uuid ||
-                persistedApparition?.getFlag?.(MODULE_ID, "origin")?.vesselUuid !== vesselSummary.uuid
-            ) {
-                throw new Error("The apparition's new Vessel reference was not persisted");
-            }
             const oldClaim = claims.find((claim) => claim.doc === existingVesselItem)?.token ?? null;
             await deleteOwnedVesselIfUnreferenced(existingVesselItem, apparitionItem, { ignoreClaim: oldClaim });
         }

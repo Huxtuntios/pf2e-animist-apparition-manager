@@ -1126,10 +1126,14 @@ await test("failed import removes partial apparition and Vessel documents", asyn
     Item.createDocuments = async (sources) => {
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat") {
-            const unsetFlag = created[0].unsetFlag.bind(created[0]);
-            created[0].unsetFlag = async (namespace, path) => {
-                if (path === "customApparitionAvatarUuid") throw new Error("Suppressed legacy flag cleanup");
-                return unsetFlag(namespace, path);
+            let failOrigin = true;
+            const getFlag = created[0].getFlag.bind(created[0]);
+            created[0].getFlag = (namespace, path) => {
+                if (path === "origin" && failOrigin) {
+                    failOrigin = false;
+                    throw new Error("Suppressed persisted origin verification");
+                }
+                return getFlag(namespace, path);
             };
         }
         return created;
@@ -1164,14 +1168,17 @@ await test("failed import retains documents adopted by another client before rol
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Adopted Partial Import") {
             partialApparition = created[0];
-            const unsetFlag = created[0].unsetFlag.bind(created[0]);
-            created[0].unsetFlag = async (namespace, path) => {
-                if (path === "customApparitionAvatarUuid") {
+            let failOrigin = true;
+            const getFlag = created[0].getFlag.bind(created[0]);
+            created[0].getFlag = (namespace, path) => {
+                if (path === "origin" && failOrigin) {
+                    failOrigin = false;
                     entered.resolve();
-                    await gate.promise;
-                    throw new Error("Suppressed legacy flag cleanup after adoption");
+                    return gate.promise.then(() => {
+                        throw new Error("Suppressed persisted origin verification after adoption");
+                    });
                 }
-                return unsetFlag(namespace, path);
+                return getFlag(namespace, path);
             };
         }
         return created;
@@ -1239,10 +1246,14 @@ await test("failed import does not delete a referenced pre-existing Vessel", asy
     Item.createDocuments = async (sources) => {
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat") {
-            const unsetFlag = created[0].unsetFlag.bind(created[0]);
-            created[0].unsetFlag = async (namespace, path) => {
-                if (path === "customApparitionAvatarUuid") throw new Error("Suppressed referenced legacy flag cleanup");
-                return unsetFlag(namespace, path);
+            let failOrigin = true;
+            const getFlag = created[0].getFlag.bind(created[0]);
+            created[0].getFlag = (namespace, path) => {
+                if (path === "origin" && failOrigin) {
+                    failOrigin = false;
+                    throw new Error("Suppressed referenced persisted origin verification");
+                }
+                return getFlag(namespace, path);
             };
         }
         return created;
@@ -1285,14 +1296,17 @@ await test("failed import retains Spells adopted through a pre-existing Vessel r
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Referenced Adoption Import") {
             partialApparition = created[0];
-            const unsetFlag = created[0].unsetFlag.bind(created[0]);
-            created[0].unsetFlag = async (namespace, path) => {
-                if (path === "customApparitionAvatarUuid") {
+            let failOrigin = true;
+            const getFlag = created[0].getFlag.bind(created[0]);
+            created[0].getFlag = (namespace, path) => {
+                if (path === "origin" && failOrigin) {
+                    failOrigin = false;
                     entered.resolve();
-                    await gate.promise;
-                    throw new Error("Suppressed referenced legacy flag cleanup after adoption");
+                    return gate.promise.then(() => {
+                        throw new Error("Suppressed referenced persisted origin verification after adoption");
+                    });
                 }
-                return unsetFlag(namespace, path);
+                return getFlag(namespace, path);
             };
         }
         return created;
@@ -1360,14 +1374,17 @@ await test("a Spell cleanup candidate blocks cross-client adoption before deleti
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Spell Race Import") {
             partialApparition = created[0];
-            const unsetFlag = created[0].unsetFlag.bind(created[0]);
-            created[0].unsetFlag = async (namespace, path) => {
-                if (path === "customApparitionAvatarUuid") {
+            let failOrigin = true;
+            const getFlag = created[0].getFlag.bind(created[0]);
+            created[0].getFlag = (namespace, path) => {
+                if (path === "origin" && failOrigin) {
+                    failOrigin = false;
                     originEntered.resolve();
-                    await originGate.promise;
-                    throw new Error("Suppressed Spell race legacy flag cleanup");
+                    return originGate.promise.then(() => {
+                        throw new Error("Suppressed Spell race persisted origin verification");
+                    });
                 }
-                return unsetFlag(namespace, path);
+                return getFlag(namespace, path);
             };
         }
         return created;
@@ -1441,14 +1458,17 @@ await test("a cross-client Spell claim prevents failed-import rollback", async (
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Spell Claim Import") {
             partialApparition = created[0];
-            const unsetFlag = created[0].unsetFlag.bind(created[0]);
-            created[0].unsetFlag = async (namespace, path) => {
-                if (path === "customApparitionAvatarUuid") {
+            let failOrigin = true;
+            const getFlag = created[0].getFlag.bind(created[0]);
+            created[0].getFlag = (namespace, path) => {
+                if (path === "origin" && failOrigin) {
+                    failOrigin = false;
                     originEntered.resolve();
-                    await originGate.promise;
-                    throw new Error("Suppressed Spell claim legacy flag cleanup");
+                    return originGate.promise.then(() => {
+                        throw new Error("Suppressed Spell claim persisted origin verification");
+                    });
                 }
-                return unsetFlag(namespace, path);
+                return getFlag(namespace, path);
             };
         }
         return created;
@@ -3113,14 +3133,17 @@ await test("failed import retains a module Spell adopted as a Vessel", async () 
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Vessel Role Import") {
             partialApparition = created[0];
-            const unsetFlag = created[0].unsetFlag.bind(created[0]);
-            created[0].unsetFlag = async (namespace, path) => {
-                if (path === "customApparitionAvatarUuid") {
+            let failOrigin = true;
+            const getFlag = created[0].getFlag.bind(created[0]);
+            created[0].getFlag = (namespace, path) => {
+                if (path === "origin" && failOrigin) {
+                    failOrigin = false;
                     entered.resolve();
-                    await gate.promise;
-                    throw new Error("Suppressed Vessel role legacy flag cleanup");
+                    return gate.promise.then(() => {
+                        throw new Error("Suppressed Vessel role persisted origin verification");
+                    });
                 }
-                return unsetFlag(namespace, path);
+                return getFlag(namespace, path);
             };
         }
         return created;
@@ -3216,14 +3239,17 @@ await test("failed import cleans an unreferenced Spell when a created Vessel is 
         const created = await createDocuments(sources);
         if (created[0]?.type === "feat" && created[0].name === "Independent Spell Rollback") {
             partialApparition = created[0];
-            const unsetFlag = created[0].unsetFlag.bind(created[0]);
-            created[0].unsetFlag = async (namespace, path) => {
-                if (path === "customApparitionAvatarUuid") {
+            let failOrigin = true;
+            const getFlag = created[0].getFlag.bind(created[0]);
+            created[0].getFlag = (namespace, path) => {
+                if (path === "origin" && failOrigin) {
+                    failOrigin = false;
                     entered.resolve();
-                    await gate.promise;
-                    throw new Error("Suppressed legacy flag cleanup");
+                    return gate.promise.then(() => {
+                        throw new Error("Suppressed independent rollback origin verification");
+                    });
                 }
-                return unsetFlag(namespace, path);
+                return getFlag(namespace, path);
             };
         }
         return created;
@@ -3305,6 +3331,90 @@ await test("switching Vessels retains the old Vessel still listed as a Spell by 
         if (game.items.get(oldVessel.id)) await oldVessel.delete();
     }
 });
+await test("legacy flag cleanup failure aborts before committing a Vessel switch", async () => {
+    const consoleError = console.error;
+    console.error = () => {};
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Legacy Cleanup Switch Source",
+        lores: [],
+        spells: [],
+        vessel: { name: "Legacy Cleanup Switch A", source: { type: "spell", system: {} } },
+    });
+    const oldVessel = await fromUuid(core.parseApparitionVesselUuid(original));
+    const target = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Legacy Cleanup Switch Target",
+        lores: [],
+        spells: [],
+        vessel: { name: "Legacy Cleanup Switch B", source: { type: "spell", system: {} } },
+    });
+    const targetVessel = await fromUuid(core.parseApparitionVesselUuid(target));
+    await original.setFlag(ID, "customApparitionAvatarUuid", "Actor.legacy");
+    const unsetFlag = original.unsetFlag.bind(original);
+    original.unsetFlag = async (namespace, path) => {
+        if (path === "customApparitionAvatarUuid") throw new Error("Suppressed legacy flag cleanup");
+        return unsetFlag(namespace, path);
+    };
+    try {
+        const saved = await custom.saveCustomApparitionNow({
+            existingItem: original,
+            name: original.name,
+            img: original.img,
+            flavor: "",
+            lores: [],
+            spells: [],
+            vessel: { uuid: targetVessel.uuid, isReference: true, name: targetVessel.name },
+        });
+        equal(saved, null);
+        equal(core.parseApparitionVesselUuid(original), oldVessel.uuid);
+        assert(game.items.get(oldVessel.id));
+    } finally {
+        original.unsetFlag = unsetFlag;
+        console.error = consoleError;
+        await custom.deleteCustomApparitionNow(original);
+        await custom.deleteCustomApparitionNow(target);
+    }
+});
+await test("suppressed reference-to-reference Vessel switch fails closed", async () => {
+    const consoleError = console.error;
+    console.error = () => {};
+    const vesselA = doc({ type: "spell", name: "Reference Switch A", system: { level: { value: 1 }, traits: { value: ["focus"] } } });
+    const vesselB = doc({ type: "spell", name: "Reference Switch B", system: { level: { value: 1 }, traits: { value: ["focus"] } } });
+    game.items.push(vesselA, vesselB);
+    documents.set(vesselA.uuid, vesselA);
+    documents.set(vesselB.uuid, vesselB);
+    const original = await custom.importCustomApparitionData({
+        format: "pf2e-dailies-apparition-fix-custom-apparition",
+        name: "Reference Switch Source",
+        lores: [],
+        spells: [],
+        vessel: { uuid: vesselA.uuid, name: vesselA.name },
+    });
+    const update = original.update.bind(original);
+    original.update = async (changes) => (changes.system ? undefined : update(changes));
+    try {
+        const saved = await custom.saveCustomApparitionNow({
+            existingItem: original,
+            name: original.name,
+            img: original.img,
+            flavor: "",
+            lores: [],
+            spells: [],
+            vessel: { uuid: vesselB.uuid, isReference: true, name: vesselB.name },
+        });
+        equal(saved, null);
+        equal(core.parseApparitionVesselUuid(original), vesselA.uuid);
+        assert(game.items.get(vesselA.id));
+        assert(game.items.get(vesselB.id));
+    } finally {
+        original.update = update;
+        console.error = consoleError;
+        await custom.deleteCustomApparitionNow(original);
+        await vesselA.delete();
+        await vesselB.delete();
+    }
+});
 await test("feat update persists the Vessel description and origin atomically", async () => {
     const original = await custom.importCustomApparitionData({
         format: "pf2e-dailies-apparition-fix-custom-apparition",
@@ -3321,6 +3431,12 @@ await test("feat update persists the Vessel description and origin atomically", 
         vessel: { name: "Atomic Origin B", source: { type: "spell", system: {} } },
     });
     const targetVessel = await fromUuid(core.parseApparitionVesselUuid(target));
+    const updates = [];
+    const update = original.update.bind(original);
+    original.update = async (changes) => {
+        updates.push(changes);
+        return update(changes);
+    };
     const setFlag = original.setFlag.bind(original);
     original.setFlag = async (namespace, path, value) => {
         if (path === "origin") throw new Error("Separate origin write must not be used");
@@ -3337,9 +3453,17 @@ await test("feat update persists the Vessel description and origin atomically", 
             vessel: { uuid: targetVessel.uuid, isReference: true, name: targetVessel.name },
         });
         assert(saved);
+        assert(
+            updates.some(
+                (changes) =>
+                    changes.system?.description?.value?.includes(targetVessel.uuid) &&
+                    changes.flags?.[ID]?.origin?.vesselUuid === targetVessel.uuid,
+            ),
+        );
         equal(core.parseApparitionVesselUuid(saved), targetVessel.uuid);
         equal(saved.getFlag(ID, "origin").vesselUuid, targetVessel.uuid);
     } finally {
+        original.update = update;
         original.setFlag = setFlag;
         await custom.deleteCustomApparitionNow(original);
         await custom.deleteCustomApparitionNow(target);
@@ -3436,12 +3560,16 @@ await test("rollback continues after deletion errors and retains sources", async
         }
         if (created[0]?.type === "feat") {
             partialApparition = created[0];
-            const unsetFlag = created[0].unsetFlag.bind(created[0]);
+            let failOrigin = true;
+            const getFlag = created[0].getFlag.bind(created[0]);
             const deleteFeat = created[0].delete.bind(created[0]);
             restoreDelete = deleteFeat;
-            created[0].unsetFlag = async (namespace, path) => {
-                if (path === "customApparitionAvatarUuid") throw new Error("Suppressed rollback legacy flag cleanup");
-                return unsetFlag(namespace, path);
+            created[0].getFlag = (namespace, path) => {
+                if (path === "origin" && failOrigin) {
+                    failOrigin = false;
+                    throw new Error("Suppressed rollback origin verification");
+                }
+                return getFlag(namespace, path);
             };
             created[0].delete = async () => {
                 throw new Error("Suppressed rollback deletion");
