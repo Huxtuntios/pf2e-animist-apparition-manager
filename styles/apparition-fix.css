@@ -235,6 +235,42 @@
     flex: 1;
 }
 
+.apparition-fix-focus-picker-list {
+    max-height: 28rem;
+    overflow-y: auto;
+}
+
+.apparition-fix-focus-picker-list li > button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    min-height: 44px;
+    padding: 0.25rem 0.5rem;
+    text-align: left;
+}
+
+.apparition-fix-focus-picker-list .source,
+.apparition-fix-focus-picker-list .traits,
+.apparition-fix-focus-picker-list .uuid {
+    opacity: 0.75;
+    font-size: 12px;
+}
+
+.apparition-fix-focus-picker-list .traits {
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.apparition-fix-focus-picker-list .uuid {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .apparition-fix-editor-footer {
     display: flex;
     justify-content: flex-end;

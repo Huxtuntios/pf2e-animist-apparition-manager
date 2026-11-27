@@ -38,6 +38,20 @@ export async function runManagerTests({
         apps.push(app);
         return app;
     };
+    const apparition = (key, name) => {
+        const item = doc({
+            type: "feat",
+            name,
+            system: {
+                rules: [],
+                traits: { value: ["animist"], otherTags: ["animist-apparition"] },
+                description: { value: "<ul></ul>" },
+            },
+        });
+        item.uuid = key;
+        documents.set(key, item);
+        return item;
+    };
     async function paint(app) {
         app.captureUI();
         const context = await app._prepareContext({});
@@ -225,6 +239,109 @@ export async function runManagerTests({
         assert(app.element.querySelector("details[data-detail-key]").open);
         assert(app.element.querySelector('[data-ui-section="advanced"]').open);
         equal(app.element.querySelector('[role="tab"][aria-selected="true"]').dataset.managerTab, "profiles");
+    });
+    await run("random binding uses current search state rather than stale DOM visibility", async () => {
+        const app = appFor();
+        const alpha = apparition("Item.alpha", "Alpha");
+        const beta = apparition("Item.beta", "Beta");
+        app.available = [data.summarizeApparition(alpha), data.summarizeApparition(beta)];
+        app.availableLoading = false;
+        app.started = true;
+        await paint(app);
+
+        const input = app.element.querySelector('[data-role="apparition-search"]');
+        input.value = "beta";
+        input.dispatchEvent(new Event("input"));
+        const alphaRow = app.element.querySelector('[data-action="bond"][data-uuid="Item.alpha"]').closest("[data-searchable]");
+        const betaRow = app.element.querySelector('[data-action="bond"][data-uuid="Item.beta"]').closest("[data-searchable]");
+        alphaRow.hidden = false;
+        betaRow.hidden = true;
+
+        const originalRandom = Math.random;
+        Math.random = () => 0;
+        try {
+            app.element.querySelector('[data-action="bond-random"]').click();
+            await wait(80);
+        } finally {
+            Math.random = originalRandom;
+        }
+        equal(
+            core.getBondedApparitionFeats(app.actor).map((item) => item.name),
+            ["Beta"],
+        );
+    });
+    await run("random binding excludes apparitions bonded after the last render", async () => {
+        const app = appFor();
+        const alpha = apparition("Item.alpha", "Alpha");
+        const beta = apparition("Item.beta", "Beta");
+        app.available = [data.summarizeApparition(alpha), data.summarizeApparition(beta)];
+        app.availableLoading = false;
+        app.started = true;
+        await paint(app);
+        await core.addApparition(app.actor, alpha);
+
+        const originalRandom = Math.random;
+        Math.random = () => 0;
+        try {
+            app.element.querySelector('[data-action="bond-random"]').click();
+            await wait(80);
+        } finally {
+            Math.random = originalRandom;
+        }
+        equal(
+            core
+                .getBondedApparitionFeats(app.actor)
+                .map((item) => item.name)
+                .sort(),
+            ["Alpha", "Beta"],
+        );
+    });
+    await run("random binding with no search matches does not bind an apparition", async () => {
+        const app = appFor();
+        app.available = [data.summarizeApparition(apparition("Item.alpha", "Alpha"))];
+        app.availableLoading = false;
+        app.started = true;
+        await paint(app);
+        const input = app.element.querySelector('[data-role="apparition-search"]');
+        input.value = "nothing";
+        input.dispatchEvent(new Event("input"));
+        app.element.querySelector('[data-action="bond-random"]').click();
+        await wait(80);
+        equal(core.getBondedApparitionFeats(app.actor).length, 0);
+    });
+    await run("random binding selects the only search match", async () => {
+        const app = appFor();
+        app.available = [
+            data.summarizeApparition(apparition("Item.alpha", "Alpha")),
+            data.summarizeApparition(apparition("Item.beta", "Beta")),
+        ];
+        app.availableLoading = false;
+        app.started = true;
+        await paint(app);
+        const input = app.element.querySelector('[data-role="apparition-search"]');
+        input.value = "beta";
+        input.dispatchEvent(new Event("input"));
+        app.element.querySelector('[data-action="bond-random"]').click();
+        await wait(80);
+        equal(
+            core.getBondedApparitionFeats(app.actor).map((item) => item.name),
+            ["Beta"],
+        );
+    });
+    await run("rapid random clicks do not create duplicate bonds", async () => {
+        const app = appFor();
+        app.available = [
+            data.summarizeApparition(apparition("Item.alpha", "Alpha")),
+            data.summarizeApparition(apparition("Item.beta", "Beta")),
+        ];
+        app.availableLoading = false;
+        app.started = true;
+        await paint(app);
+        const button = app.element.querySelector('[data-action="bond-random"]');
+        button.click();
+        button.click();
+        await wait(100);
+        equal(core.getBondedApparitionFeats(app.actor).length, 1);
     });
     await run("tab keyboard navigation and native buttons work", async () => {
         const app = appFor();

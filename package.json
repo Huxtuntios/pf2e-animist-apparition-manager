@@ -1,6 +1,6 @@
 {
   "name": "pf2e-dailies-apparition-fix",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "private": true,
   "description": "Pf2e Animist Apparition Manager - a Foundry VTT module for the Pathfinder 2e Animist.",
   "type": "module",

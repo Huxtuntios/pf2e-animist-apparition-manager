@@ -1,5 +1,7 @@
 # Pf2e Animist Apparition Manager
 
+**1.3.4:** random apparition binding now follows the active search and current bond state; custom apparitions preserve original focus Spell UUIDs and can select an existing focus Spell without duplicating or modifying its source document.
+
 **1.3.3:** smaller manager typography: 14 px body, 15 px apparition names, 12 px labels; 44 px click targets preserved. Sheet colors, primary highlights and mechanics are unchanged. [Notes (Russian)](docs/UPDATE-1.3.3.ru.md).
 
 **1.3.2:** compact header and apparition cards; primary apparitions now have a warm highlight, burgundy border/stripe and filled star. PF2e sheet colors, lazy loading and game mechanics are preserved. [Notes (Russian)](docs/UPDATE-1.3.2.ru.md).
